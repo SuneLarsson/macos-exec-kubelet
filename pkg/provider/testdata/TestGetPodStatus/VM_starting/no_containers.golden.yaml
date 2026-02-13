@@ -1,0 +1,28 @@
+conditions:
+- lastProbeTime: null
+  lastTransitionTime: null
+  status: "True"
+  type: PodScheduled
+- lastProbeTime: null
+  lastTransitionTime: null
+  status: "False"
+  type: Initialized
+- lastProbeTime: null
+  lastTransitionTime: null
+  status: "False"
+  type: Ready
+containerStatuses:
+- containerID: vz://f4d693b914345df9efd05dd4e35cd9e0dbefbd558128df0b6fa70510b030daf9
+  image: localhost:5000/macos:latest
+  imageID: ""
+  lastState: {}
+  name: container-0
+  ready: false
+  restartCount: 0
+  started: false
+  state:
+    waiting:
+      message: VM is starting
+      reason: Starting
+hostIP: 10.0.0.1
+phase: Pending

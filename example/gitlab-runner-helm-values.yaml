@@ -1,0 +1,72 @@
+replicas: 1
+
+gitlabUrl: 'https://gitlab.com/'
+
+## Configuration for the Pods that the runner launches for each new job
+##
+runners:
+  # runner configuration, where the multi line strings is evaluated as
+  # template so you can specify helm values inside of it.
+  #
+  # tpl: https://helm.sh/docs/howto/charts_tips_and_tricks/#using-the-tpl-function
+  # runner configuration: https://docs.gitlab.com/runner/configuration/advanced-configuration.html
+  config: |
+    [[runners]]
+      executor = "kubernetes"
+      builds_dir = "/Users/master/builds"
+      output_limit = 102400
+      pre_build_script = '''
+      shared_files_mnt="/Volumes/My Shared Files/builds/"
+      runner_builds_tree="$HOME/builds/"
+
+      function prepare_builds_dir {
+        printf "\e[0Ksection_start:%s:prepare_builds_dir[collapsed=true]\r\e[0K%s\n" "$(date +%s)" "Prepare builds directory"
+        echo " 🔄📂 Copying cached builds from mount $shared_files_mnt to local $runner_builds_tree"
+        rsync -a --delete --stats "$shared_files_mnt" "$runner_builds_tree"
+        printf "\e[0Ksection_end:%s:prepare_builds_dir\r\e[0K\n" "$(date +%s)"
+      }
+      prepare_builds_dir
+
+      function share_builds_dir {
+        rv=$?
+        printf "\e[0Ksection_start:%s:share_builds_dir[collapsed=true]\r\e[0K%s\n" "$(date +%s)" "Share builds directory with host"
+        echo " 🚀📦 Passing generated artifacts from local $runner_builds_tree to mount $shared_files_mnt"
+        rsync -a --stats "$runner_builds_tree" "$shared_files_mnt"
+        printf "\e[0Ksection_end:%s:share_builds_dir\r\e[0K\n" "$(date +%s)"
+        exit $rv
+      }
+      trap share_builds_dir EXIT
+      '''
+      environment = [
+        "FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY=true",
+        "FF_RETRIEVE_POD_WARNING_EVENTS=true",
+        "FF_PRINT_POD_EVENTS=true",
+        "FF_USE_NEW_BASH_EVAL_STRATEGY=true",
+        "FF_USE_FASTZIP=true",
+      ]
+      [runners.kubernetes]
+        namespace = "{{.Release.Namespace}}"
+        image = "127.0.0.1:5000/macos:latest"
+        privileged = true
+        poll_timeout = 1200
+        pull_policy = "if-not-present"
+        cpu_request = "4"
+        memory_request = "12Gi"
+        pod_termination_grace_period_seconds = 15
+        [runners.kubernetes.container_lifecycle.post_start.exec]
+          command = [
+            "mkdir -p \"$HOME/builds/$CI_PROJECT_PATH\"",
+            "networksetup -setproxyautodiscovery Ethernet on",
+          ]
+        [runners.kubernetes.node_selector]
+          "type" = "virtual-kubelet"
+          "kubernetes.io/arch" = "arm64"
+        [runners.kubernetes.node_tolerations]
+          "virtual-kubelet.io/provider=macos-vz" = "NoSchedule"
+  runUntagged: false
+
+rbac:
+  create: true
+
+metrics:
+  enabled: true

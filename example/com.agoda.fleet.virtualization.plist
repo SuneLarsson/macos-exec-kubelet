@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>APISERVER_CA_CERT_LOCATION</key>
+		<string>/Users/ubuntu/.kube/ca.crt</string>
+		<key>APISERVER_CERT_LOCATION</key>
+		<string>/Users/ubuntu/.kube/tls.crt</string>
+		<key>APISERVER_KEY_LOCATION</key>
+		<string>/Users/ubuntu/.kube/tls.key</string>
+		<key>DOCKER_HOST</key>
+		<string>unix:///Users/master/.colima/docker.sock</string>
+		<key>KUBECONFIG</key>
+		<string>/Users/ubuntu/.kube/config</string>
+		<key>VZ_BRIDGE_INTERFACE</key>
+		<string>vlan0</string>
+		<key>VZ_SSH_PASSWORD</key>
+		<string>thesis</string>
+		<key>VZ_SSH_USER</key>
+		<string>thesis</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.agoda.fleet.virtualization</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/master/.fleet/bin/kubelet</string>
+		<string>--authentication-token-webhook</string>
+		<string>true</string>
+		<string>--nodename</string>
+		<string>vk-macos-vz-test</string>
+		<string>--provider-id</string>
+		<string>provider://c7fcb693-405a-4e82-b527-2fa2728f3795</string>
+		<string>--log-level</string>
+		<string>info</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/master/Library/Logs/com.agoda.fleet.virtualization/output.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/master/Library/Logs/com.agoda.fleet.virtualization/output.log</string>
+</dict>
+</plist>

@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: macos
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: macos
+  template:
+    metadata:
+      labels:
+        app: macos
+    spec:
+      containers:
+      - name: macos
+        image: "127.0.0.1:5000/macos:latest"
+        resources:
+          requests:
+            cpu: 4
+            memory: 12Gi
+        imagePullPolicy: IfNotPresent
+      tolerations:
+      - key: "virtual-kubelet.io/provider"
+        operator: "Equal"
+        value: "macos-vz"
+        effect: "NoSchedule"
+      nodeSelector:
+        kubernetes.io/os: "darwin"

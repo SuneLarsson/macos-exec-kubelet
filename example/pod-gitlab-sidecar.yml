@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gitlab-runner-macos
+  namespace: ci
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ci
+  name: gitlab-runner-macos
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gitlab-runner-macos
+  namespace: ci
+subjects:
+- kind: ServiceAccount
+  name: gitlab-runner-macos
+  namespace: ci
+roleRef:
+  kind: Role
+  name: gitlab-runner-macos
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gitlab-runner-macos
+  namespace: ci
+spec:
+  serviceAccountName: gitlab-runner-macos
+  containers:
+  - name: compute
+    image: "127.0.0.1:5000/macos:latest"
+    resources:
+      requests:
+        cpu: 4
+        memory: 12Gi
+    lifecycle:
+      postStart:
+        exec:
+          command:
+          - /bin/bash
+          - -c
+          - networksetup -setproxyautodiscovery Ethernet on
+    imagePullPolicy: IfNotPresent
+  - name: gitlab-runner
+    image: "gitlab/gitlab-runner:ubuntu-v16.8.0"
+    lifecycle:
+      postStart:
+        exec:
+          command:
+          - /bin/sh
+          - -c
+          - |
+            APISERVER="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+            SERVICEACCOUNT="/var/run/secrets/kubernetes.io/serviceaccount"
+            NAMESPACE="$(cat ${SERVICEACCOUNT}/namespace)"
+            TOKEN="$(cat ${SERVICEACCOUNT}/token)"
+            CACERT="${SERVICEACCOUNT}/ca.crt"
+            PODNAME=$(hostname)
+
+            get_pod_ip() {
+              curl -s --cacert "${CACERT}" \
+              -H "Authorization: Bearer $TOKEN" \
+              -X GET "$APISERVER/api/v1/namespaces/$NAMESPACE/pods/$PODNAME" | grep -oP '(?<="podIP": ")[^"]*'
+            }
+            
+            POD_IP=""
+            RETRY_DELAY=5
+            while [ -z "$POD_IP" ]; do
+              POD_IP=$(get_pod_ip)
+              if [ -z "$POD_IP" ]; then
+                echo "Pod IP not found, retrying in $RETRY_DELAY seconds..."
+                sleep $RETRY_DELAY
+              fi
+            done
+
+            # Register the GitLab runner
+            gitlab-runner register \
+              --non-interactive \
+              --name "${PODNAME}" \
+              --url https://gitlab.com \
+              --token "" \
+              --executor ssh \
+              --ssh-user "admin" \
+              --ssh-password "admin" \
+              --ssh-host "$POD_IP" \
+              --ssh-port '22' \
+              --ssh-disable-strict-host-key-checking 'true' \
+              --output-limit 102400
+  tolerations:
+  - key: "virtual-kubelet.io/provider"
+    operator: "Equal"
+    value: "macos-vz"
+    effect: "NoSchedule"
+  nodeSelector:
+    kubernetes.io/os: "darwin"

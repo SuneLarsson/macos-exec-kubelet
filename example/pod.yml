@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: macos
+spec:
+  containers:
+  - name: macos
+    image: "127.0.0.1:5000/macos:latest"
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 4
+        memory: 12Gi
+  tolerations:
+  - key: "virtual-kubelet.io/provider"
+    operator: "Equal"
+    value: "macos-vz"
+    effect: "NoSchedule"
+  nodeSelector:
+    kubernetes.io/os: "darwin"

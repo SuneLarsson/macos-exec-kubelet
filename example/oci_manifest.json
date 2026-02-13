@@ -1,0 +1,48 @@
+{
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "artifactType": "application/vnd.agoda.macosvz.artifact",
+    "config": {
+        "mediaType": "application/vnd.oci.empty.v1+json",
+        "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "size": 2,
+        "data": "e30=",
+        "platform": {
+            "architecture": "arm64",
+            "os": "darwin"
+        }
+    },
+    "layers": [
+        {
+            "mediaType": "application/vnd.agoda.macosvz.disk.image.v1",
+            "digest": "sha256:b925c33d73f29ec2875a9e0019623baddfa42737d33033502b77981cd53a77b4",
+            "size": 16910689013,
+            "annotations": {
+                "com.agoda.macosvz.content.uncompressed-digest": "sha256:8989efbfa94a0f7bd956c84a4b907eec187c1576703ad7232b99272392202b93",
+                "com.agoda.macosvz.content.uncompressed-size": "137438953472",
+                "org.opencontainers.image.title": "disk.img"
+            }
+        },
+        {
+            "mediaType": "application/vnd.agoda.macosvz.aux.image.v1",
+            "digest": "sha256:eed3927d4d07a5f9407141d3d9ef3138c2c8390333ee4579f4d64ac4fe22c0c3",
+            "size": 422272,
+            "annotations": {
+                "com.agoda.macosvz.content.uncompressed-digest": "sha256:25ada7e013410ce7d66d287c243167ab597a91cb51a275108cc54bc57c9242ba",
+                "com.agoda.macosvz.content.uncompressed-size": "33570816",
+                "org.opencontainers.image.title": "aux.img"
+            }
+        },
+        {
+            "mediaType": "application/vnd.agoda.macosvz.config.v1+json",
+            "digest": "sha256:f3175f197a96effb29cc535ebb3b4e2953802af5988fb918aa9ca69096accf68",
+            "size": 562,
+            "annotations": {
+                "org.opencontainers.image.title": "config.json"
+            }
+        }
+    ],
+    "annotations": {
+        "org.opencontainers.image.created": "2024-04-26T11:30:28Z"
+    }
+}
