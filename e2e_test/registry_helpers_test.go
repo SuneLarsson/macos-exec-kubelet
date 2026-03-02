@@ -6,19 +6,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/agoda-com/macOS-vz-kubelet/pkg/event"
-	"github.com/agoda-com/macOS-vz-kubelet/pkg/oci"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -29,14 +23,8 @@ import (
 	"github.com/docker/go-connections/nat"
 	docker "github.com/moby/moby/client"
 
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/crypto/bcrypt"
 	"k8s.io/apimachinery/pkg/util/wait"
-
-	"oras.land/oras-go/v2"
-	"oras.land/oras-go/v2/registry/remote"
-	"oras.land/oras-go/v2/registry/remote/auth"
-	"oras.land/oras-go/v2/registry/remote/errcode"
 )
 
 type registryFixture struct {
@@ -194,105 +182,6 @@ func prepareExistingRegistry(ctx context.Context, dockerCl *docker.Client, exist
 		Username: username,
 		Password: password,
 	}, nil
-}
-
-func pushMacOSImageToRegistry(ctx context.Context, registry registryFixture, imageDir, imageRef string) (err error) {
-	store, err := oci.New(imageDir, false, event.LogEventRecorder{})
-	if err != nil {
-		return fmt.Errorf("init oci store: %w", err)
-	}
-	defer func() {
-		err = errors.Join(err, store.Close(ctx))
-	}()
-
-	cfgPath := filepath.Join(imageDir, oci.MediaTypeConfigV1.Title())
-	configBytes, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return fmt.Errorf("read config: %w", err)
-	}
-
-	var cfg oci.Config
-	if err := json.Unmarshal(configBytes, &cfg); err != nil {
-		return fmt.Errorf("decode config: %w", err)
-	}
-
-	if len(cfg.Storage) == 0 {
-		cfg.Storage = []oci.MediaType{
-			oci.MediaTypeAuxImage,
-			oci.MediaTypeDiskImage,
-		}
-	}
-
-	seen := make(map[oci.MediaType]struct{}, len(cfg.Storage))
-	layerDescs := make([]ocispec.Descriptor, 0, len(cfg.Storage))
-	for _, mediaType := range cfg.Storage {
-		if _, ok := seen[mediaType]; ok {
-			continue
-		}
-		seen[mediaType] = struct{}{}
-
-		desc, err := store.Add(ctx, string(mediaType), mediaType.Title())
-		if err != nil {
-			return fmt.Errorf("add %s: %w", mediaType.Title(), err)
-		}
-		layerDescs = append(layerDescs, desc)
-	}
-
-	configDesc, err := store.Set(ctx, cfg)
-	if err != nil {
-		return fmt.Errorf("set config: %w", err)
-	}
-
-	repo, err := remote.NewRepository(imageRef)
-	if err != nil {
-		return fmt.Errorf("parse image reference: %w", err)
-	}
-	repo.PlainHTTP = isLocalhostOrLoopback(repo.Reference.Registry)
-	repo.Client = &auth.Client{
-		Credential: auth.StaticCredential(repo.Reference.Registry, auth.Credential{
-			Username: registry.Username,
-			Password: registry.Password,
-		}),
-	}
-
-	if repo.Reference.Reference == "" {
-		return fmt.Errorf("image reference %q must include a tag or digest", imageRef)
-	}
-
-	manifestDesc, err := oras.PackManifest(ctx, store, oras.PackManifestVersion1_0, "", oras.PackManifestOptions{
-		ConfigDescriptor: &configDesc,
-		Layers:           layerDescs,
-	})
-	if err != nil {
-		return fmt.Errorf("pack manifest: %w", err)
-	}
-
-	if err := store.Tag(ctx, manifestDesc, repo.Reference.Reference); err != nil {
-		return fmt.Errorf("tag manifest: %w", err)
-	}
-
-	scopedCtx := auth.AppendRepositoryScope(ctx, repo.Reference, auth.ActionPush, auth.ActionPull)
-	tolerantRepo := &tolerantRepository{Repository: repo}
-	if _, err := oras.Copy(scopedCtx, store, repo.Reference.Reference, tolerantRepo, repo.Reference.Reference, oras.DefaultCopyOptions); err != nil {
-		return fmt.Errorf("push image: %w", err)
-	}
-
-	return nil
-}
-
-type tolerantRepository struct {
-	*remote.Repository
-}
-
-func (r *tolerantRepository) Exists(ctx context.Context, target ocispec.Descriptor) (bool, error) {
-	exists, err := r.Repository.Exists(ctx, target)
-	if err != nil {
-		var respErr *errcode.ErrorResponse
-		if errors.As(err, &respErr) && respErr.StatusCode == http.StatusBadRequest {
-			return false, nil
-		}
-	}
-	return exists, err
 }
 
 func buildDockerConfigJSON(registryHost, username, password string) ([]byte, error) {

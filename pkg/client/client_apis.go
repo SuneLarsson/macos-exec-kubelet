@@ -14,6 +14,15 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+// ProcessClientConfig holds configuration for creating a ProcessClient.
+type ProcessClientConfig struct {
+	// LogsDir is where stdout/stderr log files for each pod are written.
+	LogsDir string
+	// RunnerUser is the macOS username to run job processes as.
+	// When empty, processes run as the current user (the kubelet's own account).
+	RunnerUser string
+}
+
 // PodProcess represents a running process group for a pod.
 type PodProcess struct {
 	Namespace string

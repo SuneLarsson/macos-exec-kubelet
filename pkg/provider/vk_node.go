@@ -23,7 +23,7 @@ import (
 
 const (
 	// DefaultPods is the default number of pods that can be run on a node.
-	DefaultPods = 110
+	DefaultPods = 2
 
 	// LabelCPUModelName is the label name for the CPU model name
 	LabelCPUModelName = "feature.node.kubernetes.io/cpu-model.name"

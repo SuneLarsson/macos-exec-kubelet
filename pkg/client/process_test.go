@@ -19,7 +19,10 @@ func TestProcessClient_CreatePod(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	c := NewProcessClient(tmpDir)
+	c, err := NewProcessClient(ProcessClientConfig{LogsDir: tmpDir})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

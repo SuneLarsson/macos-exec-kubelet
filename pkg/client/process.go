@@ -22,8 +22,9 @@ import (
 
 type ProcessClient struct {
 	// Map of namespacedPodName -> PodProcess
-	processes sync.Map
-	logsDir   string
+	processes  sync.Map
+	logsDir    string
+	credential *resolvedCredential // nil means: run as current user
 }
 
 type processState struct {
@@ -36,10 +37,18 @@ type processState struct {
 	podProcess *PodProcess
 }
 
-func NewProcessClient(logsDir string) *ProcessClient {
-	return &ProcessClient{
-		logsDir: logsDir,
+// NewProcessClient creates a ProcessClient. cfg.RunnerUser is resolved to a
+// UID/GID at construction time so a bad username causes an immediate error
+// rather than a per-job failure.
+func NewProcessClient(cfg ProcessClientConfig) (*ProcessClient, error) {
+	cred, err := lookupRunnerCredential(cfg.RunnerUser)
+	if err != nil {
+		return nil, err
 	}
+	return &ProcessClient{
+		logsDir:    cfg.LogsDir,
+		credential: cred,
+	}, nil
 }
 
 func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceAccountToken string, configMaps map[string]*corev1.ConfigMap, creds resource.RegistryCredentialStore) error {
@@ -72,17 +81,24 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 	pCtx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(pCtx, command, args...)
 
+	// Drop to runner user if configured
+	applyCredential(cmd, c.credential)
+
 	// Setup environment
 	cmd.Env = os.Environ()
 	for _, env := range container.Env {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", env.Name, env.Value))
 	}
 
-	// Prepare logs
+	// Prepare logs directory; chown so the runner user can write to it
 	podLogDir := filepath.Join(c.logsDir, pod.Namespace, pod.Name, container.Name)
 	if err := os.MkdirAll(podLogDir, 0755); err != nil {
 		cancel()
 		return fmt.Errorf("failed to create log dir: %w", err)
+	}
+	if err := chownLogDir(podLogDir, c.credential); err != nil {
+		cancel()
+		return fmt.Errorf("failed to chown log dir: %w", err)
 	}
 
 	stdoutFile, err := os.Create(filepath.Join(podLogDir, "stdout.log"))
@@ -100,7 +116,11 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 	cmd.Stdout = stdoutFile
 	cmd.Stderr = stderrFile
 
-	logger.Infof("Starting process for pod %s/%s: %s %v", pod.Namespace, pod.Name, command, args)
+	if c.credential != nil {
+		logger.Infof("Starting process for pod %s/%s as UID=%d: %s %v", pod.Namespace, pod.Name, c.credential.uid, command, args)
+	} else {
+		logger.Infof("Starting process for pod %s/%s: %s %v", pod.Namespace, pod.Name, command, args)
+	}
 
 	if err := cmd.Start(); err != nil {
 		logger.WithError(err).Error("Failed to start process")
@@ -142,14 +162,7 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 		Pod:       pod,
 	}
 
-	state.podProcess = podProcess // Store it for retrieval
-
-	// We store the processState pointer implicitly by associating it with the key in a separate map if needed,
-	// but here we need to retrieve it for Kill.
-	// Let's modify PodProcess or wrap it.
-	// To keep checking strict matching, I will store a custom struct in the sync.Map
-	// which contains both PodProcess data and the internal state.
-
+	state.podProcess = podProcess
 	c.processes.Store(key, state)
 	return nil
 }
@@ -162,19 +175,17 @@ func (c *ProcessClient) DeletePod(ctx context.Context, namespace, name string, g
 	}
 	state := val.(*processState)
 
-	// Cancel context to trigger Kill (via CommandContext) or manual signal
-	// os/exec CommandContext sends SIGKILL when context is done, but we might want SIGTERM first.
-
+	// Send SIGTERM first; fall back to SIGKILL via context cancel after grace period
 	if state.cmd.Process != nil {
 		state.cmd.Process.Signal(syscall.SIGTERM)
 	}
 
 	select {
 	case <-state.waitDone:
-		// Process exited
+		// Process exited cleanly
 	case <-time.After(time.Duration(gracePeriod) * time.Second):
 		// Force kill
-		state.cancel() // This kills the process
+		state.cancel()
 		<-state.waitDone
 	}
 
@@ -201,17 +212,14 @@ func (c *ProcessClient) GetPod(ctx context.Context, namespace, name string) (*Po
 			if ee, ok := exitErr.(*exec.ExitError); ok {
 				exitCode = ee.ExitCode()
 			} else {
-				exitCode = 1 // Basic error
+				exitCode = 1
 			}
 		}
 	default:
 		// Running
-		exitCode = -1 // Running
+		exitCode = -1
 	}
 
-	// Update stored PodProcess in case we want to return the updated one
-	// But PodProcess struct is a value in map? No, it's pointer.
-	// However, state.podProcess is what we return.
 	state.podProcess.ExitCode = exitCode
 	state.podProcess.ExitError = exitErr
 
@@ -230,12 +238,7 @@ func (c *ProcessClient) GetPodList(ctx context.Context) (map[types.NamespacedNam
 }
 
 func (c *ProcessClient) GetContainerLogs(ctx context.Context, namespace, podName, containerName string, opts api.ContainerLogOpts) (io.ReadCloser, error) {
-	// Dumb implementation: just read the whole file or tail it.
-	// For now, return the file opened.
 	podLogDir := filepath.Join(c.logsDir, namespace, podName, containerName)
-	// Try stdout or stderr
-
-	// NOTE: This does not support follow/tail properly without more complex logic.
 	path := filepath.Join(podLogDir, "stdout.log")
 	return os.Open(path)
 }

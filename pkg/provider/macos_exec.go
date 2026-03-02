@@ -46,6 +46,7 @@ type MacOSExecProvider struct {
 
 	nodeName           string
 	platform           string
+	internalIP         string
 	daemonEndpointPort int32
 
 	// *metrics.MacOSVZPodMetricsProvider
@@ -53,9 +54,9 @@ type MacOSExecProvider struct {
 
 // NewMacOSExecProvider creates a new MacOSExec provider.
 func NewMacOSExecProvider(ctx context.Context, runtimeClient client.RuntimeClient, config MacOSExecProviderConfig) (p *MacOSExecProvider, err error) {
-	// if config.Platform != "darwin" {
-	// 	return nil, errdefs.InvalidInputf("platform type %q is not supported", config.Platform)
-	// }
+	if config.Platform != "darwin" {
+		return nil, errdefs.InvalidInputf("platform type %q is not supported", config.Platform)
+	}
 
 	p = &MacOSExecProvider{}
 	p.runtimeClient = runtimeClient
@@ -65,10 +66,12 @@ func NewMacOSExecProvider(ctx context.Context, runtimeClient client.RuntimeClien
 
 	p.nodeName = config.NodeName
 	p.platform = config.Platform
+	p.internalIP = config.InternalIP
 	p.daemonEndpointPort = config.DaemonEndpointPort
 
 	p.eventRecorder = config.EventRecorder
 
+	// TODO: Add metrics provider
 	// p.MacOSVZPodMetricsProvider = metrics.NewMacOSVZPodMetricsProvider(p.nodeName, p.podLister, p.vzClient)
 	return p, nil
 }
@@ -246,8 +249,8 @@ func (p *MacOSExecProvider) getPodStatusFromProcess(process *client.PodProcess) 
 
 	return corev1.PodStatus{
 		Phase:     phase,
-		HostIP:    "127.0.0.1", // TODO: Get real host IP
-		PodIP:     "127.0.0.1", // Exec process uses host network usually
+		HostIP:    p.internalIP,
+		PodIP:     p.internalIP, // Exec process uses host network usually
 		StartTime: &metav1.Time{Time: process.StartedAt},
 		ContainerStatuses: []corev1.ContainerStatus{
 			{

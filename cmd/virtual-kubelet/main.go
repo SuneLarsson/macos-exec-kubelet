@@ -41,7 +41,7 @@ import (
 )
 
 var (
-	appIdentifier = "com.thesis.virtualization"
+	appIdentifier = "com.thesis.userexecution"
 	buildVersion  = "dev"
 	k8sVersion    = "v1.34.1" // This should follow the version of k8s.io we are importing
 
@@ -59,6 +59,7 @@ var (
 	numberOfWorkers               = 10
 	resync          time.Duration = 1 * time.Minute
 	providerID      string
+	runnerUser      string // macOS username to run job processes as (empty = current user)
 
 	certPath       = os.Getenv("APISERVER_CERT_LOCATION")
 	keyPath        = os.Getenv("APISERVER_KEY_LOCATION")
@@ -69,7 +70,7 @@ var (
 	webhookAuthnCacheTTL         time.Duration
 	webhookAuthzUnauthedCacheTTL time.Duration
 	webhookAuthzAuthedCacheTTL   time.Duration
-	nodeName                     = "vk-macos-exec-test"
+	nodeName                     = "mac-mini-exec"
 	listenPort                   = 10250
 )
 
@@ -138,6 +139,7 @@ func main() {
 	flags.StringVar(&logLevel, "log-level", logLevel, "log level.")
 	flags.IntVar(&numberOfWorkers, "pod-sync-workers", numberOfWorkers, `set the number of pod synchronization workers`)
 	flags.DurationVar(&resync, "full-resync-period", resync, "how often to perform a full resync of pods between kubernetes and the provider")
+	flags.StringVar(&runnerUser, "runner-user", runnerUser, "macOS username to run job processes as (empty = run as current user)")
 
 	flags.StringVar(&clientCACert, "client-verify-ca", os.Getenv("APISERVER_CA_CERT_LOCATION"), "CA cert to use to verify client requests")
 	flags.BoolVar(&clientNoVerify, "no-verify-clients", clientNoVerify, "Do not require client certificate validation")
@@ -308,8 +310,14 @@ func run(ctx context.Context, c kubernetes.Interface) error {
 			}
 			cachePath = filepath.Join(cachePath, appIdentifier)
 
-			// Using pure process client now
-			processClient := client.NewProcessClient(filepath.Join(cachePath, "logs"))
+			// Using pure process client now; resolve runner user UID/GID at startup.
+			processClient, err := client.NewProcessClient(client.ProcessClientConfig{
+				LogsDir:    filepath.Join(cachePath, "logs"),
+				RunnerUser: runnerUser,
+			})
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to create process client: %w", err)
+			}
 
 			providerConfig := provider.MacOSExecProviderConfig{
 				NodeName:           nodeName,

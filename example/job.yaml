@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: macos-job
+  namespace: your-namespace
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: macos
+        image: placeholder   # Ignored — no image is pulled
+        command: ["/bin/zsh", "-c", "echo hello from mac && sleep 5"]
+        # OR just:
+        # command: ["/usr/local/bin/my-script.sh"]
+        env:
+        - name: MY_VAR
+          value: "hello"
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+      tolerations:
+      - key: "virtual-kubelet.io/provider"
+        operator: "Exists"
+        effect: "NoSchedule"
+      nodeSelector:
+        kubernetes.io/os: "darwin"
