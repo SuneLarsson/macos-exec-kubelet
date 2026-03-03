@@ -15,8 +15,8 @@ import (
 	"github.com/virtual-kubelet/virtual-kubelet/errdefs"
 	"github.com/virtual-kubelet/virtual-kubelet/log"
 	"github.com/virtual-kubelet/virtual-kubelet/node/api"
-	"github.com/virtual-kubelet/virtual-kubelet/node/api/statsv1alpha1"
 	"github.com/virtual-kubelet/virtual-kubelet/trace"
+	stats "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -337,9 +337,9 @@ func (p *MacOSExecProvider) GetMetricsResource(ctx context.Context) ([]*dto.Metr
 
 // GetStatsSummary satisfies the nodeutil.Provider interface.
 // Process-based execution does not expose container-level resource stats.
-func (p *MacOSExecProvider) GetStatsSummary(ctx context.Context) (*statsv1alpha1.Summary, error) {
-	return &statsv1alpha1.Summary{
-		Node: statsv1alpha1.NodeStats{
+func (p *MacOSExecProvider) GetStatsSummary(ctx context.Context) (*stats.Summary, error) {
+	return &stats.Summary{
+		Node: stats.NodeStats{
 			NodeName: p.nodeName,
 		},
 	}, nil
