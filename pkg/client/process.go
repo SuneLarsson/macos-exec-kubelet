@@ -190,6 +190,13 @@ func (c *ProcessClient) DeletePod(ctx context.Context, namespace, name string, g
 	}
 
 	c.processes.Delete(key)
+
+	// Clean up log files for all containers under this pod
+	podLogDir := filepath.Join(c.logsDir, namespace, name)
+	if err := os.RemoveAll(podLogDir); err != nil {
+		log.G(ctx).WithError(err).Warn("Failed to remove pod log directory")
+	}
+
 	return nil
 }
 
