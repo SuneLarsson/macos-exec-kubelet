@@ -15,6 +15,7 @@ import (
 	"github.com/virtual-kubelet/virtual-kubelet/errdefs"
 	"github.com/virtual-kubelet/virtual-kubelet/log"
 	"github.com/virtual-kubelet/virtual-kubelet/node/api"
+	"github.com/virtual-kubelet/virtual-kubelet/node/api/statsv1alpha1"
 	"github.com/virtual-kubelet/virtual-kubelet/trace"
 
 	corev1 "k8s.io/api/core/v1"
@@ -332,6 +333,16 @@ func (p *MacOSExecProvider) PortForward(ctx context.Context, namespace, pod stri
 // This provider does not expose Prometheus metrics; returning nil is valid.
 func (p *MacOSExecProvider) GetMetricsResource(ctx context.Context) ([]*dto.MetricFamily, error) {
 	return nil, nil
+}
+
+// GetStatsSummary satisfies the nodeutil.Provider interface.
+// Process-based execution does not expose container-level resource stats.
+func (p *MacOSExecProvider) GetStatsSummary(ctx context.Context) (*statsv1alpha1.Summary, error) {
+	return &statsv1alpha1.Summary{
+		Node: statsv1alpha1.NodeStats{
+			NodeName: p.nodeName,
+		},
+	}, nil
 }
 
 // handlePreStopHooks is removed/simplified in this version as we don't have DiscardingExecIO or complex container logic yet.
