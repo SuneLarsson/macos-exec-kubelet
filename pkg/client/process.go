@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -18,6 +20,15 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	stats "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
+)
+
+const (
+	// logRotateMaxBytes is the size threshold above which a log file is rotated
+	// before being re-opened for a new pod run.
+	logRotateMaxBytes = 50 * 1024 * 1024 // 50 MB
+
+	// pidFileName is written next to stdout/stderr to enable orphan cleanup on restart.
+	pidFileName = "pid"
 )
 
 type ProcessClient struct {
@@ -40,15 +51,122 @@ type processState struct {
 // NewProcessClient creates a ProcessClient. cfg.RunnerUser is resolved to a
 // UID/GID at construction time so a bad username causes an immediate error
 // rather than a per-job failure.
+//
+// On startup, NewProcessClient scans logsDir for PID files left by a previous
+// kubelet instance and kills any surviving orphan processes before accepting
+// new work.
 func NewProcessClient(cfg ProcessClientConfig) (*ProcessClient, error) {
 	cred, err := lookupRunnerCredential(cfg.RunnerUser)
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessClient{
+	c := &ProcessClient{
 		logsDir:    cfg.LogsDir,
 		credential: cred,
-	}, nil
+	}
+	if cfg.LogsDir != "" {
+		c.scanAndKillOrphans(cfg.LogsDir)
+	}
+	return c, nil
+}
+
+// scanAndKillOrphans walks logsDir looking for pid files written by a previous
+// kubelet run. Any process that is still alive is SIGKILL-ed and the log
+// directory is removed so the next run starts clean.
+func (c *ProcessClient) scanAndKillOrphans(logsDir string) {
+	ctx := context.Background()
+	logger := log.G(ctx)
+
+	// Walk: logsDir/<namespace>/<podName>/<containerName>/pid
+	_ = filepath.Walk(logsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() || info.Name() != pidFileName {
+			return nil
+		}
+
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			logger.WithError(readErr).Warnf("orphan scan: cannot read pid file %s", path)
+			return nil
+		}
+
+		pidStr := strings.TrimSpace(string(raw))
+		// Format: "<pid> <startEpochNano>"
+		parts := strings.SplitN(pidStr, " ", 2)
+		pid, convErr := strconv.Atoi(parts[0])
+		if convErr != nil || pid <= 0 {
+			logger.Warnf("orphan scan: invalid pid in %s: %q", path, pidStr)
+			return nil
+		}
+
+		var savedStartNano int64
+		if len(parts) == 2 {
+			savedStartNano, _ = strconv.ParseInt(parts[1], 10, 64)
+		}
+
+		// Check liveness with signal 0
+		proc, findErr := os.FindProcess(pid)
+		if findErr != nil {
+			// Process gone — just clean up
+			cleanupOrphanDir(logger, filepath.Dir(path))
+			return nil
+		}
+
+		// signal 0 confirms whether the PID is alive (Unix only; on macOS this works)
+		if sigErr := proc.Signal(syscall.Signal(0)); sigErr != nil {
+			// ESRCH or permission error — either gone or not ours
+			cleanupOrphanDir(logger, filepath.Dir(path))
+			return nil
+		}
+
+		// Guard against PID reuse: compare process start time if we have it
+		if savedStartNano != 0 {
+			actualStartNano := processStartTimeNano(pid)
+			if actualStartNano != 0 && actualStartNano != savedStartNano {
+				logger.Infof("orphan scan: pid %d reused (saved start %d, actual %d) — skipping kill",
+					pid, savedStartNano, actualStartNano)
+				cleanupOrphanDir(logger, filepath.Dir(path))
+				return nil
+			}
+		}
+
+		// Kill the orphan
+		logger.Infof("orphan scan: killing orphan process pid=%d from %s", pid, path)
+		if killErr := proc.Signal(syscall.SIGKILL); killErr != nil {
+			logger.WithError(killErr).Warnf("orphan scan: failed to kill pid %d", pid)
+		}
+		cleanupOrphanDir(logger, filepath.Dir(path))
+		return nil
+	})
+}
+
+func cleanupOrphanDir(logger log.Logger, dir string) {
+	if err := os.RemoveAll(dir); err != nil {
+		logger.WithError(err).Warnf("orphan scan: failed to remove dir %s", dir)
+	}
+}
+
+// rotateLogFile renames path → path+".1" if the file already exists and
+// exceeds logRotateMaxBytes. This keeps unbounded log growth in check for
+// long-lived pods.
+func rotateLogFile(path string) error {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil // nothing to rotate
+	}
+	if err != nil {
+		return err
+	}
+	if info.Size() < logRotateMaxBytes {
+		return nil
+	}
+	rotated := path + ".1"
+	return os.Rename(path, rotated)
+}
+
+// writePidFile writes "<pid> <startEpochNano>\n" to the pid file in podLogDir.
+func writePidFile(podLogDir string, pid int, startedAt time.Time) error {
+	content := fmt.Sprintf("%d %d\n", pid, startedAt.UnixNano())
+	return os.WriteFile(filepath.Join(podLogDir, pidFileName), []byte(content), 0644)
 }
 
 func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceAccountToken string, configMaps map[string]*corev1.ConfigMap, creds resource.RegistryCredentialStore) error {
@@ -56,6 +174,11 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 
 	if len(pod.Spec.Containers) == 0 {
 		return fmt.Errorf("no containers in pod spec")
+	}
+
+	// Warn if the user defined multiple containers — only the first will run.
+	if len(pod.Spec.Containers) > 1 {
+		logger.Warn("Only first container is supported; additional containers will be ignored")
 	}
 
 	// For now, we only support the first container for simplicity in this iteration.
@@ -81,6 +204,11 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 	pCtx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(pCtx, command, args...)
 
+	// Apply working directory if specified
+	if container.WorkingDir != "" {
+		cmd.Dir = container.WorkingDir
+	}
+
 	// Drop to runner user if configured
 	applyCredential(cmd, c.credential)
 
@@ -101,12 +229,24 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 		return fmt.Errorf("failed to chown log dir: %w", err)
 	}
 
-	stdoutFile, err := os.Create(filepath.Join(podLogDir, "stdout.log"))
+	// Rotate existing log files before (re-)opening them
+	stdoutPath := filepath.Join(podLogDir, "stdout.log")
+	stderrPath := filepath.Join(podLogDir, "stderr.log")
+	if err := rotateLogFile(stdoutPath); err != nil {
+		cancel()
+		return fmt.Errorf("failed to rotate stdout log: %w", err)
+	}
+	if err := rotateLogFile(stderrPath); err != nil {
+		cancel()
+		return fmt.Errorf("failed to rotate stderr log: %w", err)
+	}
+
+	stdoutFile, err := os.Create(stdoutPath)
 	if err != nil {
 		cancel()
 		return err
 	}
-	stderrFile, err := os.Create(filepath.Join(podLogDir, "stderr.log"))
+	stderrFile, err := os.Create(stderrPath)
 	if err != nil {
 		stdoutFile.Close()
 		cancel()
@@ -130,11 +270,18 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 		return err
 	}
 
+	startedAt := time.Now()
+
+	// Write PID file immediately so orphan cleanup can find it on the next restart
+	if err := writePidFile(podLogDir, cmd.Process.Pid, startedAt); err != nil {
+		logger.WithError(err).Warn("Failed to write pid file; orphan cleanup will not cover this pod")
+	}
+
 	state := &processState{
 		cmd:       cmd,
 		cancel:    cancel,
 		pid:       cmd.Process.Pid,
-		startedAt: time.Now(),
+		startedAt: startedAt,
 		waitDone:  make(chan struct{}),
 	}
 
@@ -143,6 +290,9 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 		defer func() {
 			stdoutFile.Close()
 			stderrFile.Close()
+			// Remove the pid file once the process has exited cleanly — it is
+			// no longer an orphan candidate.
+			_ = os.Remove(filepath.Join(podLogDir, pidFileName))
 			close(state.waitDone)
 		}()
 		state.exitError = cmd.Wait()
@@ -158,7 +308,7 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 		Name:      pod.Name,
 		Pid:       cmd.Process.Pid,
 		Command:   cmdParts,
-		StartedAt: state.startedAt,
+		StartedAt: startedAt,
 		Pod:       pod,
 	}
 
@@ -213,7 +363,10 @@ func (c *ProcessClient) GetPod(ctx context.Context, namespace, name string) (*Po
 
 	select {
 	case <-state.waitDone:
-		// Exited
+		// Exited — capture result and proactively remove from map so that the
+		// provider can drive Kubernetes deletion without waiting for an explicit
+		// DeletePod call. sync.Map.Delete is idempotent, so a concurrent
+		// DeletePod call is safe.
 		exitErr = state.exitError
 		if exitErr != nil {
 			if ee, ok := exitErr.(*exec.ExitError); ok {
@@ -222,6 +375,7 @@ func (c *ProcessClient) GetPod(ctx context.Context, namespace, name string) (*Po
 				exitCode = 1
 			}
 		}
+		c.processes.Delete(key)
 	default:
 		// Running
 		exitCode = -1
