@@ -56,7 +56,7 @@ var (
 	kubeConfigPath  = os.Getenv("KUBECONFIG")
 	startupTimeout  time.Duration
 	disableTaint    bool
-	numberOfWorkers               = 10
+	numberOfWorkers               = 1
 	resync          time.Duration = 1 * time.Minute
 	providerID      string
 	runnerUser      string // macOS username to run job processes as (empty = current user)
