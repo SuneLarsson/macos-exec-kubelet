@@ -11,6 +11,7 @@ import (
 
 	// "github.com/agoda-com/macOS-vz-kubelet/pkg/metrics"
 
+	dto "github.com/prometheus/client_model/go"
 	"github.com/virtual-kubelet/virtual-kubelet/errdefs"
 	"github.com/virtual-kubelet/virtual-kubelet/log"
 	"github.com/virtual-kubelet/virtual-kubelet/node/api"
@@ -325,6 +326,12 @@ func (p *MacOSExecProvider) AttachToContainer(ctx context.Context, namespace, po
 // PortForward forwards a local port to a port on the pod
 func (p *MacOSExecProvider) PortForward(ctx context.Context, namespace, pod string, port int32, stream io.ReadWriteCloser) (err error) {
 	return errNotImplemented
+}
+
+// GetMetricsResource satisfies the nodeutil.Provider interface.
+// This provider does not expose Prometheus metrics; returning nil is valid.
+func (p *MacOSExecProvider) GetMetricsResource(ctx context.Context) ([]*dto.MetricFamily, error) {
+	return nil, nil
 }
 
 // handlePreStopHooks is removed/simplified in this version as we don't have DiscardingExecIO or complex container logic yet.
