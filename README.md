@@ -167,6 +167,13 @@ example/
   job.yaml             # example Kubernetes Job
 ```
 
+## Acknowledgements
+
+This project is built on top of two open-source projects:
+
+- **[virtual-kubelet](https://github.com/virtual-kubelet/virtual-kubelet)** — the CNCF framework that provides the Virtual Kubelet API and node lifecycle scaffolding that this provider plugs into.
+- **[macOS-vz-kubelet](https://github.com/agoda-com/macOS-vz-kubelet)** by Agoda — a Virtual Kubelet provider that runs pods as macOS VMs using the Virtualization framework. This project started as a fork of that work; the VM execution layer was replaced with direct process execution (`os/exec`) to get native hardware access without virtualisation overhead.
+
 ## License
 
 Apache 2.0
