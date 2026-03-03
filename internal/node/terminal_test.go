@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	vzio "github.com/agoda-com/macOS-vz-kubelet/internal/io"
 	"github.com/agoda-com/macOS-vz-kubelet/internal/node"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,7 +52,7 @@ func TestGetConsoleSize(t *testing.T) {
 		resizeCh := make(chan api.TermSize, 1)
 		resizeCh <- api.TermSize{Width: 80, Height: 24}
 
-		attach := node.NewExecIO(true, nil, &vzio.DiscardWriteCloser{}, &vzio.DiscardWriteCloser{}, resizeCh)
+		attach := node.NewExecIO(true, nil, &mockWriteCloser{}, &mockWriteCloser{}, resizeCh)
 
 		size := node.GetConsoleSize(ctx, attach)
 		assert.NotNil(t, size)
@@ -68,7 +67,7 @@ func TestGetConsoleSize(t *testing.T) {
 
 		resizeCh := make(chan api.TermSize)
 
-		attach := node.NewExecIO(true, nil, &vzio.DiscardWriteCloser{}, &vzio.DiscardWriteCloser{}, resizeCh)
+		attach := node.NewExecIO(true, nil, &mockWriteCloser{}, &mockWriteCloser{}, resizeCh)
 
 		start := time.Now()
 		size := node.GetConsoleSize(ctx, attach)
@@ -84,7 +83,7 @@ func TestGetConsoleSize(t *testing.T) {
 		resizeCh := make(chan api.TermSize, 1)
 		resizeCh <- api.TermSize{Width: 0, Height: 0}
 
-		attach := node.NewExecIO(true, nil, &vzio.DiscardWriteCloser{}, &vzio.DiscardWriteCloser{}, resizeCh)
+		attach := node.NewExecIO(true, nil, &mockWriteCloser{}, &mockWriteCloser{}, resizeCh)
 
 		size := node.GetConsoleSize(ctx, attach)
 		assert.Nil(t, size)
@@ -97,7 +96,7 @@ func TestHandleTerminalResizing(t *testing.T) {
 		cancel()
 
 		resizeCh := make(chan api.TermSize)
-		attach := node.NewExecIO(true, nil, &vzio.DiscardWriteCloser{}, &vzio.DiscardWriteCloser{}, resizeCh)
+		attach := node.NewExecIO(true, nil, &mockWriteCloser{}, &mockWriteCloser{}, resizeCh)
 
 		resizeFunc := func(size api.TermSize) error {
 			return nil
@@ -113,7 +112,7 @@ func TestHandleTerminalResizing(t *testing.T) {
 		resizeCh := make(chan api.TermSize, 1)
 		resizeCh <- api.TermSize{Width: 80, Height: 24}
 
-		attach := node.NewExecIO(true, nil, &vzio.DiscardWriteCloser{}, &vzio.DiscardWriteCloser{}, resizeCh)
+		attach := node.NewExecIO(true, nil, &mockWriteCloser{}, &mockWriteCloser{}, resizeCh)
 
 		resizeFunc := func(size api.TermSize) error {
 			assert.Equal(t, uint16(80), size.Width)
@@ -129,7 +128,7 @@ func TestHandleTerminalResizing(t *testing.T) {
 		resizeCh := make(chan api.TermSize, 1)
 		resizeCh <- api.TermSize{Width: 80, Height: 24}
 
-		attach := node.NewExecIO(true, nil, &vzio.DiscardWriteCloser{}, &vzio.DiscardWriteCloser{}, resizeCh)
+		attach := node.NewExecIO(true, nil, &mockWriteCloser{}, &mockWriteCloser{}, resizeCh)
 
 		resizeFunc := func(size api.TermSize) error {
 			return io.ErrUnexpectedEOF
@@ -143,7 +142,7 @@ func TestHandleTerminalResizing(t *testing.T) {
 		resizeCh := make(chan api.TermSize, 1)
 		resizeCh <- api.TermSize{Width: 80, Height: 24}
 
-		attach := node.NewExecIO(true, nil, &vzio.DiscardWriteCloser{}, &vzio.DiscardWriteCloser{}, resizeCh)
+		attach := node.NewExecIO(true, nil, &mockWriteCloser{}, &mockWriteCloser{}, resizeCh)
 
 		resizeFunc := func(size api.TermSize) error {
 			return io.EOF

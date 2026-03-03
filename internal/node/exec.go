@@ -3,9 +3,14 @@ package node
 import (
 	"io"
 
-	vzio "github.com/agoda-com/macOS-vz-kubelet/internal/io"
 	"github.com/virtual-kubelet/virtual-kubelet/node/api"
 )
+
+// discardWriteCloser is an io.WriteCloser that discards all writes.
+type discardWriteCloser struct{}
+
+func (discardWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (discardWriteCloser) Close() error                { return nil }
 
 // ExecIO implements the api.AttachIO interface and holds the I/O streams and resize channel.
 type ExecIO struct {
@@ -57,6 +62,6 @@ func (e *ExecIO) Resize() <-chan api.TermSize {
 func DiscardingExecIO() *ExecIO {
 	return &ExecIO{
 		tty:    false,
-		stdout: &vzio.DiscardWriteCloser{},
+		stdout: discardWriteCloser{},
 	}
 }

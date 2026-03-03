@@ -3,7 +3,6 @@ package node_test
 import (
 	"testing"
 
-	vzio "github.com/agoda-com/macOS-vz-kubelet/internal/io"
 	"github.com/agoda-com/macOS-vz-kubelet/internal/node"
 	"github.com/stretchr/testify/assert"
 	"github.com/virtual-kubelet/virtual-kubelet/node/api"
@@ -76,7 +75,7 @@ func TestDiscardingExecIO(t *testing.T) {
 	execIO := node.DiscardingExecIO()
 	assert.False(t, execIO.TTY())
 	assert.Nil(t, execIO.Stdin())
-	assert.IsType(t, &vzio.DiscardWriteCloser{}, execIO.Stdout())
+	assert.NotNil(t, execIO.Stdout()) // discarding writer — type is unexported
 	assert.Nil(t, execIO.Stderr())
 	assert.Nil(t, execIO.Resize())
 }
