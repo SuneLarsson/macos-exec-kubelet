@@ -334,17 +334,13 @@ func run(ctx context.Context, c kubernetes.Interface) error {
 			if err != nil {
 				return nil, nil, err
 			}
-			// ConfigureNode? logic was mostly about updating node spec.
-			// provider.NewMacOSExecProvider doesn't have ConfigureNode method usually,
-			// but the interface requires it if we want to update node status?
-			// nodeutil.NewNode calls p.ConfigureNode if it exists?
-			// Warning: p.ConfigureNode was used in vz implementation to set node capacity etc.
-			// I should disable it or implement it.
-			// MacOSVZProvider had ConfigureNode. I probably didn't implement it in MacOSExecProvider.
-			// Let's implement it in provider if needed, or skip it.
-			// Existing implementation called p.ConfigureNode(ctx, cfg.Node).
-			// I removed it from macos_exec.go since I overwrote it.
-			// It's better to implement it to at least set capacity.
+
+			// ConfigureNode populates the node's addresses, OS info, kernel version,
+			// container runtime, capacity, and labels. Without this call the node
+			// would show no InternalIP and <unknown> for OS/kernel/runtime fields.
+			if err := p.ConfigureNode(ctx, cfg.Node); err != nil {
+				return nil, nil, fmt.Errorf("error configuring node: %w", err)
+			}
 
 			return p, nil, nil
 		},
