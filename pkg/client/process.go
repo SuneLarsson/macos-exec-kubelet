@@ -318,10 +318,21 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 }
 
 func (c *ProcessClient) DeletePod(ctx context.Context, namespace, name string, gracePeriod int64) error {
+	// 1. Always ensure the log directory is cleaned up, regardless of whether
+	// the process is still in memory. If the kubelet restarted and the process
+	// previously exited, the map will be empty but logs will still be on disk.
+	podLogDir := filepath.Join(c.logsDir, namespace, name)
+	if err := os.RemoveAll(podLogDir); err != nil {
+		log.G(ctx).WithError(err).Warn("Failed to remove pod log directory")
+	}
+	// Attempt to remove the namespace directory in case this was the last pod.
+	// os.Remove will naturally fail (and we ignore the error) if it's not empty.
+	_ = os.Remove(filepath.Dir(podLogDir))
+
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 	val, ok := c.processes.Load(key)
 	if !ok {
-		return errdefs.NotFound("pod process not found")
+		return errdefs.NotFound("pod process not found in memory")
 	}
 	state := val.(*processState)
 
@@ -340,12 +351,6 @@ func (c *ProcessClient) DeletePod(ctx context.Context, namespace, name string, g
 	}
 
 	c.processes.Delete(key)
-
-	// Clean up log files for all containers under this pod
-	podLogDir := filepath.Join(c.logsDir, namespace, name)
-	if err := os.RemoveAll(podLogDir); err != nil {
-		log.G(ctx).WithError(err).Warn("Failed to remove pod log directory")
-	}
 
 	return nil
 }
