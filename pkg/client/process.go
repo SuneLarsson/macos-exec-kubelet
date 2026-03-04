@@ -363,10 +363,9 @@ func (c *ProcessClient) GetPod(ctx context.Context, namespace, name string) (*Po
 
 	select {
 	case <-state.waitDone:
-		// Exited — capture result and proactively remove from map so that the
-		// provider can drive Kubernetes deletion without waiting for an explicit
-		// DeletePod call. sync.Map.Delete is idempotent, so a concurrent
-		// DeletePod call is safe.
+		// Exited — capture the result. We DO NOT delete from the map here so
+		// that the pod stays in Succeeded/Failed state and logs remain
+		// accessible until K8s explicitly calls DeletePod.
 		exitErr = state.exitError
 		if exitErr != nil {
 			if ee, ok := exitErr.(*exec.ExitError); ok {
@@ -375,7 +374,6 @@ func (c *ProcessClient) GetPod(ctx context.Context, namespace, name string) (*Po
 				exitCode = 1
 			}
 		}
-		c.processes.Delete(key)
 	default:
 		// Running
 		exitCode = -1

@@ -213,20 +213,6 @@ func (p *MacOSExecProvider) GetPodStatus(ctx context.Context, namespace, name st
 
 	status := p.getPodStatusFromProcess(process)
 
-	// Proactive cleanup: when the process has reached a terminal state the
-	// process map entry has already been removed by GetPod above. Kick off an
-	// async delete of the Kubernetes pod object so the controller can act on
-	// the terminal status without waiting for VK's next polling cycle.
-	if status.Phase == corev1.PodSucceeded || status.Phase == corev1.PodFailed {
-		go func() {
-			deleteOptions := metav1.DeleteOptions{GracePeriodSeconds: new(int64)}
-			if delErr := p.k8sClient.CoreV1().Pods(namespace).Delete(ctx, name, deleteOptions); delErr != nil {
-				// Pod may already be gone — log at Debug to avoid noise.
-				log.G(ctx).WithError(delErr).Debug("Proactive pod K8s delete on terminal phase (may already be gone)")
-			}
-		}()
-	}
-
 	return &status, nil
 }
 
