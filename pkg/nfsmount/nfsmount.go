@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/virtual-kubelet/virtual-kubelet/log"
-	corev1 "k8s.io/api/core/v1"
+	netv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -119,15 +119,13 @@ func patchNetworkPolicy(ctx context.Context, k8sClient kubernetes.Interface, nam
 
 	// For simplicity, we assume there is exactly one Ingress rule block, or create one.
 	// Production deployments might have more complex policies.
-	
-	import netv1 "k8s.io/api/networking/v1"
 
 	if allow {
 		// Define the ingress rule for the Mac IP
 		ipBlock := netv1.IPBlock{
 			CIDR: fmt.Sprintf("%s/32", macIP),
 		}
-		
+
 		rule := netv1.NetworkPolicyIngressRule{
 			From: []netv1.NetworkPolicyPeer{
 				{IPBlock: &ipBlock},
@@ -166,16 +164,16 @@ func waitForEndpoints(ctx context.Context, k8sClient kubernetes.Interface, names
 			epList, err := k8sClient.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{
 				LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", serviceName),
 			})
-			
+
 			if err != nil {
-				continue 
+				continue
 			}
 
 			// Check if we have at least one ready endpoint address
 			for _, slice := range epList.Items {
 				for _, ep := range slice.Endpoints {
 					if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
-						return nil 
+						return nil
 					}
 				}
 			}
