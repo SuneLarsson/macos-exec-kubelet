@@ -13,12 +13,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/agoda-com/macOS-vz-kubelet/pkg/nfsmount"
 	"github.com/agoda-com/macOS-vz-kubelet/pkg/resource"
 	"github.com/virtual-kubelet/virtual-kubelet/errdefs"
 	"github.com/virtual-kubelet/virtual-kubelet/log"
 	"github.com/virtual-kubelet/virtual-kubelet/node/api"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	stats "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 )
 
@@ -36,6 +38,7 @@ type ProcessClient struct {
 	processes  sync.Map
 	logsDir    string
 	credential *resolvedCredential // nil means: run as current user
+	k8sClient  kubernetes.Interface
 }
 
 type processState struct {
@@ -46,6 +49,7 @@ type processState struct {
 	pid        int
 	startedAt  time.Time
 	podProcess *PodProcess
+	cleanupNFS func() // unmounts NFS volumes on pod exit
 }
 
 // NewProcessClient creates a ProcessClient. cfg.RunnerUser is resolved to a
@@ -63,6 +67,7 @@ func NewProcessClient(cfg ProcessClientConfig) (*ProcessClient, error) {
 	c := &ProcessClient{
 		logsDir:    cfg.LogsDir,
 		credential: cred,
+		k8sClient:  cfg.K8sClient,
 	}
 	if cfg.LogsDir != "" {
 		c.scanAndKillOrphans(cfg.LogsDir)
@@ -209,6 +214,36 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 		cmd.Dir = container.WorkingDir
 	}
 
+	var cleanupNFS func()
+
+	// Mount any NFS volumes based on annotations
+	nfsService := pod.Annotations["macos-exec-kubelet/nfs-service"]
+	nfsNetpol := pod.Annotations["macos-exec-kubelet/nfs-netpol"]
+	nfsMountPath := pod.Annotations["macos-exec-kubelet/nfs-mount-path"]
+
+	if nfsService != "" && nfsMountPath != "" {
+		// Try to figure out Mac IP from current node IP if possible
+		// For now we will rely on standard routing or pass an empty string
+		// Let the pod's IP take over where necessary (or local resolving)
+
+		macIP := ""
+		if pod.Status.HostIP != "" {
+			macIP = pod.Status.HostIP
+		}
+
+		if err := nfsmount.Mount(ctx, c.k8sClient, pod.Namespace, nfsService, nfsNetpol, macIP, nfsMountPath); err != nil {
+			cancel()
+			return fmt.Errorf("failed to mount nfs volume: %w", err)
+		}
+
+		// Setup unmount
+		cleanupNFS = func() {
+			if err := nfsmount.Unmount(ctx, c.k8sClient, pod.Namespace, nfsNetpol, nfsMountPath); err != nil {
+				logger.WithError(err).Warn("Failed to unmount NFS volume")
+			}
+		}
+	}
+
 	// Drop to runner user if configured
 	applyCredential(cmd, c.credential)
 
@@ -278,11 +313,12 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 	}
 
 	state := &processState{
-		cmd:       cmd,
-		cancel:    cancel,
-		pid:       cmd.Process.Pid,
-		startedAt: startedAt,
-		waitDone:  make(chan struct{}),
+		cmd:        cmd,
+		cancel:     cancel,
+		pid:        cmd.Process.Pid,
+		startedAt:  startedAt,
+		waitDone:   make(chan struct{}),
+		cleanupNFS: cleanupNFS,
 	}
 
 	// Wait for process in background
@@ -348,6 +384,11 @@ func (c *ProcessClient) DeletePod(ctx context.Context, namespace, name string, g
 		// Force kill
 		state.cancel()
 		<-state.waitDone
+	}
+
+	// Unmount any NFS volumes now that the process has stopped.
+	if state.cleanupNFS != nil {
+		state.cleanupNFS()
 	}
 
 	c.processes.Delete(key)

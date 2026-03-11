@@ -312,8 +312,10 @@ func run(ctx context.Context, c kubernetes.Interface) error {
 
 			// Using pure process client now; resolve runner user UID/GID at startup.
 			processClient, err := client.NewProcessClient(client.ProcessClientConfig{
-				LogsDir:    filepath.Join(cachePath, "logs"),
-				RunnerUser: runnerUser,
+				LogsDir:      filepath.Join(cachePath, "logs"),
+				RunnerUser:   runnerUser,
+				K8sClient:    c,
+				PodNamespace: "",
 			})
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to create process client: %w", err)
@@ -344,6 +346,7 @@ func run(ctx context.Context, c kubernetes.Interface) error {
 
 			return p, nil, nil
 		},
+
 		func(cfg *nodeutil.NodeConfig) error {
 			return withClient(c, cfg)
 		},

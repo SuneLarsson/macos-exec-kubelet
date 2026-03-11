@@ -1,8 +1,68 @@
+---
+# 1. The NFS Server Pod deployed to a normal Linux node.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: macos-nfs-server
+  namespace: default
+  labels:
+    app: macos-nfs-server
+    project: projectname
+spec:
+  containers:
+    - name: nfs-server
+      image: itsthenetwork/nfs-server-alpine:12
+      securityContext:
+        capabilities:
+          add: ["SYS_ADMIN"]
+      env:
+        - name: SHARED_DIRECTORY
+          value: /proj/projectname
+      ports:
+        - name: nfs
+          containerPort: 2049
+
+---
+# 2. The Service to expose the NFS Pod
+apiVersion: v1
+kind: Service
+metadata:
+  name: macos-nfs-service
+  namespace: default
+spec:
+  selector:
+    app: macos-nfs-server
+  ports:
+    - name: nfs
+      port: 2049
+      targetPort: 2049
+
+---
+# 3. A Deny-All NetworkPolicy to protect the NFS server from other pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: macos-nfs-netpol
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: macos-nfs-server
+  policyTypes:
+    - Ingress
+  ingress: [] 
+
+---
+# 4. The Mac OS Job.
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: macos-job
-  namespace: your-namespace
+  namespace: default
+  annotations:
+    macos-exec-kubelet/nfs-service: "macos-nfs-service"
+    macos-exec-kubelet/nfs-netpol: "macos-nfs-netpol"
+    macos-exec-kubelet/nfs-mount-path: "/proj/projectname"
 spec:
   backoffLimit: 0
   template:
@@ -10,13 +70,8 @@ spec:
       restartPolicy: Never
       containers:
       - name: macos
-        image: placeholder   # Ignored — no image is pulled
-        command: ["/bin/zsh", "-c", "echo hello from mac && sleep 5"]
-        # OR just:
-        # command: ["/usr/local/bin/my-script.sh"]
-        env:
-        - name: MY_VAR
-          value: "hello"
+        image: placeholder
+        command: ["/bin/zsh", "-c", "echo 'Hello from Mac!' > /proj/projectname/test.txt && cat /proj/projectname/test.txt"]
         resources:
           requests:
             cpu: "2"

@@ -12,6 +12,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 )
 
 // ProcessClientConfig holds configuration for creating a ProcessClient.
@@ -21,6 +22,10 @@ type ProcessClientConfig struct {
 	// RunnerUser is the macOS username to run job processes as.
 	// When empty, processes run as the current user (the kubelet's own account).
 	RunnerUser string
+	// K8sClient is needed to lookup Services and patch NetworkPolicies for NFS mounts.
+	K8sClient kubernetes.Interface
+	// PodNamespace is needed to lookup Services in the same namespace.
+	PodNamespace string
 }
 
 // PodProcess represents a running process group for a pod.

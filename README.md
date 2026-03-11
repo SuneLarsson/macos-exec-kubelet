@@ -139,6 +139,29 @@ spec:
         kubernetes.io/os: "darwin"
 ```
 
+## Mounting Persistent Volumes (NFS Sidecar)
+
+Because macOS cannot natively mount Kubernetes PersistentVolumeClaims (PVCs) like Ceph or Longhorn directly, this provider supports mounting volumes over the network via an NFS sidecar. 
+
+1. **Deploy an NFS Server Pod** to a standard Linux worker node in your cluster. This pod should mount your PVC (or use an admission controller to mount it, e.g., via labels) and export it via NFS.
+2. **Expose it with a Service** and restrict access with a deny-all **NetworkPolicy**.
+3. **Annotate your macOS Job** to tell the `macos-exec-kubelet` where the NFS service is:
+
+```yaml
+  annotations:
+    macos-exec-kubelet/nfs-service: "macos-nfs-service"
+    macos-exec-kubelet/nfs-netpol: "macos-nfs-netpol"
+    macos-exec-kubelet/nfs-mount-path: "/proj/projectname"
+```
+
+Before the job executes, the kubelet will:
+- Discover the ClusterIP of `macos-nfs-service`.
+- Dynamically patch the `macos-nfs-netpol` NetworkPolicy to allow ingress from the Mac's IP.
+- Execute the macOS native `mount -t nfs` command, mounting the share to `/proj/projectname`.
+- Automatically `umount` and revert the NetworkPolicy once the job completes.
+
+*For a complete, deployable example including the Linux sidecar and NetworkPolicy, see `example/job.yaml`.*
+
 ## Flags
 
 | Flag | Default | Description |
