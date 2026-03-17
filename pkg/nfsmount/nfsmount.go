@@ -35,13 +35,13 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 	}
 
 	// 2. Look up the Service to get the ClusterIP
-	logger.Infof("Looking up NFS Service %s", serviceName)
-	svc, err := k8sClient.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
-	if err != nil {
-		// Attempt rollback of netpol if we fail here
-		_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
-		return fmt.Errorf("failed to get Service %s: %w", serviceName, err)
-	}
+	// logger.Infof("Looking up NFS Service %s", serviceName)
+	// svc, err := k8sClient.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	// if err != nil {
+	// 	// Attempt rollback of netpol if we fail here
+	// 	_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
+	// 	return fmt.Errorf("failed to get Service %s: %w", serviceName, err)
+	// }
 
 	// clusterIP := svc.Spec.ClusterIP
 	// if clusterIP == "" || clusterIP == "None" {
