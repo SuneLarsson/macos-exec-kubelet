@@ -1,0 +1,48 @@
+NFS_CORE_PARAM
+{
+    # Force NFSv4 only to bypass rpcbind (port 111) requirements
+    NFS_Protocols = 4;
+    
+    # Disable unneeded protocols
+    MNT_Port = 0;
+    Rquota_Port = 0;
+
+    Enable_UDP = false;
+    Enable_NLM = false;
+    Enable_RQUOTA = false;
+}
+
+NFSv4
+{
+    # Bypass state/recovery issues in stateless containers
+    Graceless = true; 
+    Allow_Numeric_Owners = true;
+    Only_Numeric_Owners = true;
+}
+
+EXPORT
+{
+    Export_Id = 1;
+
+    # Directory to export 
+    Path = "${SHARED_DIRECTORY}";
+    
+    # Mandatory for NFSv4 to mount correctly
+    Pseudo = "${SHARED_DIRECTORY}"; 
+
+    # Only NFSv4
+    Protocols = 4;
+    Transports = TCP;
+    SecType = sys;
+
+    # Map all traffic to your unprivileged container UID/GID
+    Squash = All_Squash;
+    Anonymous_Uid = ${CURRENT_UID};
+    Anonymous_Gid = ${CURRENT_GID};
+
+    Access_Type = RW;
+
+    FSAL {
+        Name = VFS;
+    }
+}

@@ -1,38 +1,45 @@
 #!/bin/bash
-set -eo pipefail
 
 # The directory to export (can be overridden via ENV)
 SHARED_DIRECTORY=${SHARED_DIRECTORY:-/nfsshare}
 
-echo "Starting NFS server..."
+echo "Starting user-space NFS server (Ganesha) in containerization environment..."
 echo "Exporting ${SHARED_DIRECTORY}"
 
 # Ensure the shared directory exists
-mkdir -p "${SHARED_DIRECTORY}"
+mkdir -p "${SHARED_DIRECTORY}" || true
 
-# Write the exports file
-# We export to '*' because access control is handled by the Kubernetes NetworkPolicy
-echo "${SHARED_DIRECTORY} *(rw,sync,no_subtree_check,no_root_squash,insecure)" > /etc/exports
+export CURRENT_UID=$(id -u)
+export CURRENT_GID=$(id -g)
 
-# Mount the rpc_pipefs if not already mounted
-if ! mount | grep -q "rpc_pipefs"; then
-  echo "Mounting rpc_pipefs..."
-  mkdir -p /var/lib/nfs/rpc_pipefs
-  mount -t rpc_pipefs rpc_pipefs /var/lib/nfs/rpc_pipefs
-fi
+# 1. Setup NSS Wrapper to map the random Kubernetes UID to a fake user named 'ganesha'
+# This stops DBus from crashing with 'User unknown' errors
+cp /etc/passwd /tmp/passwd
+echo "ganesha:x:${CURRENT_UID}:${CURRENT_GID}:Ganesha User:/tmp:/bin/bash" >> /tmp/passwd
+export NSS_WRAPPER_PASSWD=/tmp/passwd
+export NSS_WRAPPER_GROUP=/etc/group
+export LD_PRELOAD=libnss_wrapper.so
 
-# Start rpcbind (required for NFSv3/v4)
-echo "Starting rpcbind..."
-/sbin/rpcbind -w
+# Generate the config file from template using your sed logic
+cat /etc/ganesha/ganesha.conf.template | sed \
+  -e "s|\${SHARED_DIRECTORY}|${SHARED_DIRECTORY}|g" \
+  -e "s|\${CURRENT_UID}|${CURRENT_UID}|g" \
+  -e "s|\${CURRENT_GID}|${CURRENT_GID}|g" \
+  > /tmp/ganesha.conf
 
-# Start the NFS server natively
-echo "Starting nfsd..."
-/usr/sbin/exportfs -rv
-/usr/sbin/rpc.nfsd
-/usr/sbin/rpc.mountd
-/usr/sbin/rpc.statd
+# 2. Start an unprivileged DBus session to satisfy Ganesha's dependencies
+echo "Starting unprivileged DBus session..."
+export DBUS_SYSTEM_BUS_ADDRESS="unix:path=/tmp/dbus.sock"
+dbus-daemon --session --address=$DBUS_SYSTEM_BUS_ADDRESS --fork || echo "dbus start failed"
 
-echo "NFS server is running on port 2049."
+# ganesha needs its run directory to write its pid file
+mkdir -p /var/run/ganesha
 
-# Keep the container alive by tailing the logs
-exec tail -f /var/log/messages /var/log/syslog 2>/dev/null || while true; do sleep 3600; done
+# 3. Start Ganesha.nfsd
+echo "Starting ganesha.nfsd..."
+/usr/bin/ganesha.nfsd -F -L /tmp/ganesha.log -f /tmp/ganesha.conf
+EXIT_CODE=$?
+
+echo "Ganesha exited with code $EXIT_CODE"
+echo "--- GANESHA LOGS ---"
+cat /tmp/ganesha.log

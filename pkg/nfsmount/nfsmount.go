@@ -63,10 +63,10 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 		return fmt.Errorf("failed to create mount path %s: %w", localPath, err)
 	}
 
-	// 5. Run the macOS native mount command
-	// Note: macOS requires the resvport option for NFS
-	logger.Infof("Executing mount command: mount -t nfs -o resvport,rw %s:/ %s", clusterIP, localPath)
-	cmd := exec.CommandContext(ctx, "mount", "-t", "nfs", "-o", "resvport,rw", fmt.Sprintf("%s:/", clusterIP), localPath)
+	/// 5. Run the macOS native mount command
+	// Note: Force NFSv4, target port 2049, and use the explicit export path
+	logger.Infof("Executing mount command: mount -t nfs -o vers=4,port=2049,rw %s:%s %s", clusterIP, localPath, localPath)
+	cmd := exec.CommandContext(ctx, "mount", "-t", "nfs", "-o", "vers=4,port=2049,rw", fmt.Sprintf("%s:%s", clusterIP, localPath), localPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
