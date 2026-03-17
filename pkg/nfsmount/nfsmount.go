@@ -43,15 +43,16 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 		return fmt.Errorf("failed to get Service %s: %w", serviceName, err)
 	}
 
-	clusterIP := svc.Spec.ClusterIP
-	if clusterIP == "" || clusterIP == "None" {
-		_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
-		return fmt.Errorf("service %s has no ClusterIP", serviceName)
-	}
+	// clusterIP := svc.Spec.ClusterIP
+	// if clusterIP == "" || clusterIP == "None" {
+	// 	_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
+	// 	return fmt.Errorf("service %s has no ClusterIP", serviceName)
+	// }
 
 	// 3. Poll waiting for the endpoints to be non-empty (NFS pod is Ready)
 	logger.Infof("Waiting for endpoints to be ready for Service %s", serviceName)
-	if err := waitForEndpoints(ctx, k8sClient, namespace, serviceName); err != nil {
+	targetIP, err := waitForEndpoints(ctx, k8sClient, namespace, serviceName)
+	if err != nil {
 		_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
 		return fmt.Errorf("timeout waiting for NFS endpoints: %w", err)
 	}
@@ -65,8 +66,8 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 
 	/// 5. Run the macOS native mount command
 	// Note: Force NFSv4, target port 2049, and use the explicit export path
-	logger.Infof("Executing mount command: mount -t nfs -o vers=4,port=2049,rw %s:%s %s", clusterIP, localPath, localPath)
-	cmd := exec.CommandContext(ctx, "mount", "-t", "nfs", "-o", "vers=4,port=2049,rw", fmt.Sprintf("%s:%s", clusterIP, localPath), localPath)
+	logger.Infof("Executing mount command: mount -t nfs -o vers=4,port=2049,rw %s:%s %s", targetIP, localPath, localPath)
+	cmd := exec.CommandContext(ctx, "mount", "-t", "nfs", "-o", "vers=4,port=2049,rw", fmt.Sprintf("%s:%s", targetIP, localPath), localPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
@@ -148,7 +149,7 @@ func patchNetworkPolicy(ctx context.Context, k8sClient kubernetes.Interface, nam
 }
 
 // waitForEndpoints blocks until the service has at least one ready endpoint
-func waitForEndpoints(ctx context.Context, k8sClient kubernetes.Interface, namespace, serviceName string) error {
+func waitForEndpoints(ctx context.Context, k8sClient kubernetes.Interface, namespace, serviceName string) (string, error) {
 	timeout := time.After(2 * time.Minute)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -156,9 +157,9 @@ func waitForEndpoints(ctx context.Context, k8sClient kubernetes.Interface, names
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return "", ctx.Err()
 		case <-timeout:
-			return fmt.Errorf("timed out waiting for endpoints for %s", serviceName)
+			return "", fmt.Errorf("timed out waiting for endpoints for %s", serviceName)
 		case <-ticker.C:
 			// check endpoints
 			epList, err := k8sClient.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{
@@ -173,8 +174,13 @@ func waitForEndpoints(ctx context.Context, k8sClient kubernetes.Interface, names
 			for _, slice := range epList.Items {
 				for _, ep := range slice.Endpoints {
 					if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
-						return nil
+						if len(ep.Addresses) > 0 {
+							return ep.Addresses[0], nil
+						}
 					}
+					// if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
+					// 	return nil
+					// }
 				}
 			}
 		}
