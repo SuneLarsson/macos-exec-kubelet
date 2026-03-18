@@ -8,9 +8,12 @@ import (
 	"time"
 
 	"github.com/virtual-kubelet/virtual-kubelet/log"
+	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	netv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	discoveryv1 "k8s.io/apimachinery/pkg/api/errors"
+
+	// discoveryv1 "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
