@@ -58,9 +58,27 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 		return fmt.Errorf("failed to create mount path %s: %w", safeLocalPath, err)
 	}
 
-	// Mount using the physical Node IP, port 2049 (HostPort), and separated paths
-	logger.Infof("Executing HostPort mount: targetIP=%s, port=2049", targetIP)
-	cmdStr := "vers=4,port=2049,rw"
+	// Look up the Service to find the dynamically assigned NodePort
+	svc, err := k8sClient.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get Service %s: %w", serviceName, err)
+	}
+
+	var nodePort int32
+	for _, port := range svc.Spec.Ports {
+		if port.NodePort != 0 {
+			nodePort = port.NodePort
+			break
+		}
+	}
+
+	if nodePort == 0 {
+		return fmt.Errorf("service %s does not have a NodePort configured", serviceName)
+	}
+
+	// Mount using the physical Node IP and the dynamic NodePort
+	logger.Infof("Executing NodePort mount: targetIP=%s, nodePort=%d", targetIP, nodePort)
+	cmdStr := fmt.Sprintf("vers=4,port=%d,rw", nodePort)
 	targetStr := fmt.Sprintf("%s:%s", targetIP, remotePath)
 
 	cmd := exec.CommandContext(ctx, "mount", "-t", "nfs", "-o", cmdStr, targetStr, safeLocalPath)
