@@ -8,12 +8,6 @@ import (
 	"time"
 
 	"github.com/virtual-kubelet/virtual-kubelet/log"
-	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
-	netv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-
-	// discoveryv1 "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -22,7 +16,6 @@ import (
 func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, serviceName, netpolName, macIP, localPath string) error {
 	logger := log.G(ctx).WithFields(log.Fields{
 		"service": serviceName,
-		"netpol":  netpolName,
 		"macIP":   macIP,
 		"mount":   localPath,
 	})
@@ -31,38 +24,13 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 		return fmt.Errorf("kubernetes client is required for NFS mounts")
 	}
 
-	// 1. Patch the NetworkPolicy to allow this Mac's IP
-	if netpolName != "" {
-		logger.Infof("Patching NFS NetworkPolicy %s to allow Mac IP %s", netpolName, macIP)
-		if err := patchNetworkPolicy(ctx, k8sClient, namespace, netpolName, macIP, true); err != nil {
-			return fmt.Errorf("failed to patch NetworkPolicy: %w", err)
-		}
-	}
-
-	// 2. Look up the Service to get the dynamically assigned NodePort
-	logger.Infof("Looking up NFS Service %s for NodePort", serviceName)
-	svc, err := k8sClient.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get Service %s: %w", serviceName, err)
-	}
-
-	var nodePort int32
-	for _, port := range svc.Spec.Ports {
-		if port.Port == 2049 || port.Name == "nfs" {
-			nodePort = port.NodePort
-			break
-		}
-	}
-
-	// 3. Get the Node Name where the Pod is running
-	// targetNodeName, err := waitForEndpoints(ctx, k8sClient, namespace, serviceName)
-	targetNodeName, err := forceEndpointSliceCreation(ctx, k8sClient, namespace, serviceName)
-
+	logger.Infof("Waiting for endpoints to be ready for Service %s", serviceName)
+	targetNodeName, err := waitForEndpoints(ctx, k8sClient, namespace, serviceName)
 	if err != nil {
 		return fmt.Errorf("timeout waiting for NFS endpoints: %w", err)
 	}
 
-	// 4. Look up the physical InternalIP of that specific Node
+	// Look up the physical InternalIP of that specific Node
 	node, err := k8sClient.CoreV1().Nodes().Get(ctx, targetNodeName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get Node %s: %w", targetNodeName, err)
@@ -76,8 +44,12 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 		}
 	}
 
+	if targetIP == "" {
+		return fmt.Errorf("could not find InternalIP for Node %s", targetNodeName)
+	}
+
 	// Explicitly define the remote export and the safe local macOS path
-	remotePath := "/proj/sommarjobb-jupyterlaunch"
+	remotePath := "/"
 	safeLocalPath := "/tmp/sommarjobb-jupyterlaunch"
 
 	// Create local directory in the writable /tmp space to bypass macOS SIP
@@ -86,12 +58,11 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 		return fmt.Errorf("failed to create mount path %s: %w", safeLocalPath, err)
 	}
 
-	// Mount using the physical Node IP, NodePort, and separated paths
-	logger.Infof("Executing NodePort mount: targetIP=%s, nodePort=%d", targetIP, nodePort)
-	cmdStr := fmt.Sprintf("vers=4,port=%d,rw", nodePort)
+	// Mount using the physical Node IP, port 2049 (HostPort), and separated paths
+	logger.Infof("Executing HostPort mount: targetIP=%s, port=2049", targetIP)
+	cmdStr := "vers=4,port=2049,rw"
 	targetStr := fmt.Sprintf("%s:%s", targetIP, remotePath)
 
-	// Notice we use safeLocalPath at the end here
 	cmd := exec.CommandContext(ctx, "mount", "-t", "nfs", "-o", cmdStr, targetStr, safeLocalPath)
 
 	out, err := cmd.CombinedOutput()
@@ -103,239 +74,72 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 	return nil
 }
 
-// 	// 5. Create local directory
-// 	if err := os.MkdirAll(localPath, 0755); err != nil {
-// 		return fmt.Errorf("failed to create mount path %s: %w", localPath, err)
-// 	}
-
-// 	// 6. Mount using the physical Node IP and the NodePort
-// 	logger.Infof("Executing NodePort mount: targetIP=%s, nodePort=%d", targetIP, nodePort)
-// 	cmdStr := fmt.Sprintf("vers=4,port=%d,rw", nodePort)
-// 	targetStr := fmt.Sprintf("%s:%s", targetIP, localPath)
-// 	cmd := exec.CommandContext(ctx, "mount", "-t", "nfs", "-o", cmdStr, targetStr, localPath)
-
-// 	out, err := cmd.CombinedOutput()
-// 	if err != nil {
-// 		return fmt.Errorf("mount command failed: %w (output: %s)", err, out)
-// 	}
-// 	// // 2. Look up the Service to get the ClusterIP
-// 	// // logger.Infof("Looking up NFS Service %s", serviceName)
-// 	// // svc, err := k8sClient.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
-// 	// // if err != nil {
-// 	// // 	// Attempt rollback of netpol if we fail here
-// 	// // 	_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
-// 	// // 	return fmt.Errorf("failed to get Service %s: %w", serviceName, err)
-// 	// // }
-
-// 	// // clusterIP := svc.Spec.ClusterIP
-// 	// // if clusterIP == "" || clusterIP == "None" {
-// 	// // 	_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
-// 	// // 	return fmt.Errorf("service %s has no ClusterIP", serviceName)
-// 	// // }
-
-// 	// // 3. Poll waiting for the endpoints to be non-empty (NFS pod is Ready)
-// 	// logger.Infof("Waiting for endpoints to be ready for Service %s", serviceName)
-// 	// targetIP, err := waitForEndpoints(ctx, k8sClient, namespace, serviceName)
-// 	// if err != nil {
-// 	// 	_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
-// 	// 	return fmt.Errorf("timeout waiting for NFS endpoints: %w", err)
-// 	// }
-
-// 	// // 4. Create the local mount directory
-// 	// logger.Infof("Creating local mount directory %s", localPath)
-// 	// if err := os.MkdirAll(localPath, 0755); err != nil {
-// 	// 	_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
-// 	// 	return fmt.Errorf("failed to create mount path %s: %w", localPath, err)
-// 	// }
-
-// 	// /// 5. Run the macOS native mount command
-// 	// // Note: Force NFSv4, target port 2049, and use the explicit export path
-// 	// logger.Infof("Executing mount command: mount -t nfs -o vers=4,port=2049,rw %s:%s %s", targetIP, localPath, localPath)
-// 	// cmd := exec.CommandContext(ctx, "mount", "-t", "nfs", "-o", "vers=4,port=2049,rw", fmt.Sprintf("%s:%s", targetIP, localPath), localPath)
-// 	// out, err := cmd.CombinedOutput()
-// 	// if err != nil {
-// 	// 	_ = Unmount(ctx, k8sClient, namespace, netpolName, "")
-// 	// 	return fmt.Errorf("mount command failed: %w (output: %s)", err, out)
-// 	// }
-
-// 	// logger.Infof("Successfully mounted NFS at %s", localPath)
-// 	// return nil
-
-// }
-
-// Unmount unmounts the local path and restores the NetworkPolicy
+// Unmount unmounts the local path
 func Unmount(ctx context.Context, k8sClient kubernetes.Interface, namespace, netpolName, localPath string) error {
 	logger := log.G(ctx)
-	var finalErr error
 
-	// 1. Unmount the path if provided
-	if localPath != "" {
-		logger.Infof("Unmounting NFS path %s", localPath)
-		cmd := exec.CommandContext(ctx, "umount", localPath)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			logger.WithError(err).Warnf("umount command failed for %s: %s", localPath, out)
-			finalErr = fmt.Errorf("umount failed: %w", err)
-		} else {
-			// clean up empty directory
-			_ = os.Remove(localPath)
-		}
+	path := localPath
+	if path == "" {
+		path = "/tmp/sommarjobb-jupyterlaunch"
 	}
 
-	// 2. Remove the IP from the network policy (restore deny-all)
-	// Even if unmount failed, we should still try to secure the network
-	if netpolName != "" && k8sClient != nil {
-		logger.Infof("Restoring NFS NetworkPolicy %s to deny-all", netpolName)
-		if err := patchNetworkPolicy(ctx, k8sClient, namespace, netpolName, "", false); err != nil {
-			logger.WithError(err).Warnf("Failed to restore NetworkPolicy %s", netpolName)
-			if finalErr == nil {
-				finalErr = fmt.Errorf("failed to restore network policy: %w", err)
+	logger.Infof("Unmounting NFS path %s", path)
+	cmd := exec.CommandContext(ctx, "umount", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		logger.WithError(err).Warnf("umount command failed for %s: %s", path, out)
+		// Try fallback if the formal localPath isn't mounted but safeLocalPath is
+		if path != "/tmp/sommarjobb-jupyterlaunch" {
+			fallback := "/tmp/sommarjobb-jupyterlaunch"
+			logger.Infof("Trying fallback umount for %s", fallback)
+			cmd = exec.CommandContext(ctx, "umount", fallback)
+			if fallbackOut, fallbackErr := cmd.CombinedOutput(); fallbackErr == nil {
+				_ = os.Remove(fallback)
+				return nil
+			} else {
+				logger.WithError(fallbackErr).Warnf("fallback umount failed for %s: %s", fallback, fallbackOut)
+			}
+		}
+		return fmt.Errorf("umount failed: %w", err)
+	}
+
+	// clean up empty directory
+	_ = os.Remove(path)
+
+	return nil
+}
+
+// waitForEndpoints blocks until the service has at least one ready endpoint
+func waitForEndpoints(ctx context.Context, k8sClient kubernetes.Interface, namespace, serviceName string) (string, error) {
+	timeout := time.After(2 * time.Minute)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-timeout:
+			return "", fmt.Errorf("timed out waiting for endpoints for %s", serviceName)
+		case <-ticker.C:
+			// check endpoints
+			epList, err := k8sClient.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", serviceName),
+			})
+
+			if err != nil {
+				continue
+			}
+
+			// Check if we have at least one ready endpoint address
+			for _, slice := range epList.Items {
+				for _, ep := range slice.Endpoints {
+					if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
+						if ep.NodeName != nil {
+							return *ep.NodeName, nil
+						}
+					}
+				}
 			}
 		}
 	}
-
-	return finalErr
-}
-
-// patchNetworkPolicy updates the named NetworkPolicy to either allow or deny the given Mac IP
-func patchNetworkPolicy(ctx context.Context, k8sClient kubernetes.Interface, namespace, name, macIP string, allow bool) error {
-	netpol, err := k8sClient.NetworkingV1().NetworkPolicies(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-
-	// For simplicity, we assume there is exactly one Ingress rule block, or create one.
-	// Production deployments might have more complex policies.
-
-	if allow {
-		// Define the ingress rule for the Mac IP
-		ipBlock := netv1.IPBlock{
-			CIDR: fmt.Sprintf("%s/32", macIP),
-		}
-
-		rule := netv1.NetworkPolicyIngressRule{
-			From: []netv1.NetworkPolicyPeer{
-				{IPBlock: &ipBlock},
-			},
-		}
-
-		if len(netpol.Spec.Ingress) == 0 {
-			netpol.Spec.Ingress = []netv1.NetworkPolicyIngressRule{rule}
-		} else {
-			// Overwrite the first rule or append (we'll just overwrite for this bounded use case)
-			netpol.Spec.Ingress[0] = rule
-		}
-	} else {
-		// Deny all: Clear all ingress rules
-		netpol.Spec.Ingress = []netv1.NetworkPolicyIngressRule{}
-	}
-
-	_, err = k8sClient.NetworkingV1().NetworkPolicies(namespace).Update(ctx, netpol, metav1.UpdateOptions{})
-	return err
-}
-
-// // waitForEndpoints blocks until the service has at least one ready endpoint
-// func waitForEndpoints(ctx context.Context, k8sClient kubernetes.Interface, namespace, serviceName string) (string, error) {
-// 	timeout := time.After(2 * time.Minute)
-// 	ticker := time.NewTicker(2 * time.Second)
-// 	defer ticker.Stop()
-
-// 	for {
-// 		select {
-// 		case <-ctx.Done():
-// 			return "", ctx.Err()
-// 		case <-timeout:
-// 			return "", fmt.Errorf("timed out waiting for endpoints for %s", serviceName)
-// 		case <-ticker.C:
-// 			// check endpoints
-// 			epList, err := k8sClient.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{
-// 				LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", serviceName),
-// 			})
-
-// 			if err != nil {
-// 				continue
-// 			}
-
-// 			// Check if we have at least one ready endpoint address
-// 			for _, slice := range epList.Items {
-// 				for _, ep := range slice.Endpoints {
-// 					if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
-// 						if ep.NodeName != nil {
-// 							return *ep.NodeName, nil
-// 						}
-// 					}
-// 					// if ep.Conditions.Ready != nil && *ep.Conditions.Ready {
-// 					// 	return nil
-// 					// }
-// 				}
-// 			}
-// 		}
-// 	}
-// }
-
-// forceEndpointSliceCreation finds the NFS pod directly and injects an EndpointSlice to fix K8s routing
-func forceEndpointSliceCreation(ctx context.Context, k8sClient kubernetes.Interface, namespace, serviceName string) (string, error) {
-	// 1. Find the NFS Pod directly using its label
-	podList, err := k8sClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/name=macos-nfs-server",
-	})
-	if err != nil || len(podList.Items) == 0 {
-		return "", fmt.Errorf("failed to find NFS pod: %v", err)
-	}
-
-	var podIP, nodeName string
-	for _, p := range podList.Items {
-		if p.Status.Phase == corev1.PodRunning && p.Status.PodIP != "" {
-			podIP = p.Status.PodIP
-			nodeName = p.Spec.NodeName
-			break
-		}
-	}
-
-	if podIP == "" || nodeName == "" {
-		return "", fmt.Errorf("found NFS pod, but it is not running or lacks an IP")
-	}
-
-	// 2. Construct the missing EndpointSlice
-	portName := "nfs"
-	protocol := corev1.ProtocolTCP
-	portNum := int32(2049)
-	ready := true
-
-	slice := &discoveryv1.EndpointSlice{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      serviceName + "-mac-override",
-			Namespace: namespace,
-			Labels: map[string]string{
-				"kubernetes.io/service-name": serviceName,
-			},
-		},
-		AddressType: discoveryv1.AddressTypeIPv4,
-		Ports: []discoveryv1.EndpointPort{
-			{Name: &portName, Protocol: &protocol, Port: &portNum},
-		},
-		Endpoints: []discoveryv1.Endpoint{
-			{
-				Addresses:  []string{podIP},
-				Conditions: discoveryv1.EndpointConditions{Ready: &ready},
-				NodeName:   &nodeName,
-			},
-		},
-	}
-
-	// 3. Inject it into the cluster
-	_, err = k8sClient.DiscoveryV1().EndpointSlices(namespace).Create(ctx, slice, metav1.CreateOptions{})
-	if err != nil {
-		if errors.IsAlreadyExists(err) {
-			log.G(ctx).Infof("EndpointSlice override already exists, proceeding...")
-		} else {
-			// We log the error but do not hard-fail, just in case the NodePort magically opened
-			log.G(ctx).Warnf("Failed to create EndpointSlice (likely RBAC): %v", err)
-		}
-	} else {
-		log.G(ctx).Infof("Successfully injected EndpointSlice for %s", podIP)
-		// Give kube-proxy 2 seconds to write the iptables rules
-		time.Sleep(2 * time.Second)
-	}
-
-	return nodeName, nil
 }
