@@ -37,8 +37,8 @@ EXPORT
 
     # Map all traffic to your unprivileged container UID/GID
     Squash = All_Squash;
-    Anonymous_Uid = ${CURRENT_UID};
-    Anonymous_Gid = ${CURRENT_GID};
+    Anonymous_Uid = 0;
+    Anonymous_Gid = 0;
 
     Access_Type = RW;
 

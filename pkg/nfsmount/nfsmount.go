@@ -50,7 +50,7 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 
 	// Explicitly define the remote export and the safe local macOS path
 	remotePath := "/"
-	safeLocalPath := "/tmp/sommarjobb-jupyterlaunch"
+	safeLocalPath := fmt.Sprintf("/tmp/%s", namespace)
 
 	// Create local directory in the writable /tmp space to bypass macOS SIP
 	logger.Infof("Creating local safe mount directory %s", safeLocalPath)
@@ -98,7 +98,7 @@ func Unmount(ctx context.Context, k8sClient kubernetes.Interface, namespace, net
 
 	path := localPath
 	if path == "" {
-		path = "/tmp/sommarjobb-jupyterlaunch"
+		path = fmt.Sprintf("/tmp/%s", namespace)
 	}
 
 	logger.Infof("Unmounting NFS path %s", path)
@@ -106,8 +106,8 @@ func Unmount(ctx context.Context, k8sClient kubernetes.Interface, namespace, net
 	if out, err := cmd.CombinedOutput(); err != nil {
 		logger.WithError(err).Warnf("umount command failed for %s: %s", path, out)
 		// Try fallback if the formal localPath isn't mounted but safeLocalPath is
-		if path != "/tmp/sommarjobb-jupyterlaunch" {
-			fallback := "/tmp/sommarjobb-jupyterlaunch"
+		fallback := fmt.Sprintf("/tmp/%s", namespace)
+		if path != fallback {
 			logger.Infof("Trying fallback umount for %s", fallback)
 			cmd = exec.CommandContext(ctx, "umount", fallback)
 			if fallbackOut, fallbackErr := cmd.CombinedOutput(); fallbackErr == nil {
