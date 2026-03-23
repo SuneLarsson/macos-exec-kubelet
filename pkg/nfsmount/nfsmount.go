@@ -50,9 +50,9 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 
 	// Explicitly define the remote export and the safe local macOS path
 	remotePath := "/"
-	safeLocalPath := fmt.Sprintf("/tmp/%s", namespace)
+	safeLocalPath := fmt.Sprintf("/private/tmp/%s", namespace)
 
-	// Create local directory in the writable /tmp space to bypass macOS SIP
+	// Create local directory in the writable /private/tmp space to bypass macOS SIP
 	logger.Infof("Creating local safe mount directory %s", safeLocalPath)
 	if err := os.MkdirAll(safeLocalPath, 0755); err != nil {
 		return fmt.Errorf("failed to create mount path %s: %w", safeLocalPath, err)
@@ -78,7 +78,7 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 
 	// Mount using the physical Node IP and the dynamic NodePort
 	logger.Infof("Executing NodePort mount: targetIP=%s, nodePort=%d", targetIP, nodePort)
-	cmdStr := fmt.Sprintf("vers=4,port=%d,noresvport,rw", nodePort)
+	cmdStr := fmt.Sprintf("vers=4,port=%d,noresvport,noowners,locallocks,rw", nodePort)
 	targetStr := fmt.Sprintf("%s:%s", targetIP, remotePath)
 
 	cmd := exec.CommandContext(ctx, "mount", "-t", "nfs", "-o", cmdStr, targetStr, safeLocalPath)
@@ -96,32 +96,18 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 func Unmount(ctx context.Context, k8sClient kubernetes.Interface, namespace, netpolName, localPath string) error {
 	logger := log.G(ctx)
 
-	path := localPath
-	if path == "" {
-		path = fmt.Sprintf("/tmp/%s", namespace)
-	}
+	// Always use the safe local path as defined in Mount
+	safeLocalPath := fmt.Sprintf("/private/tmp/%s", namespace)
 
-	logger.Infof("Unmounting NFS path %s", path)
-	cmd := exec.CommandContext(ctx, "umount", path)
+	logger.Infof("Unmounting NFS path %s", safeLocalPath)
+	cmd := exec.CommandContext(ctx, "umount", safeLocalPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		logger.WithError(err).Warnf("umount command failed for %s: %s", path, out)
-		// Try fallback if the formal localPath isn't mounted but safeLocalPath is
-		fallback := fmt.Sprintf("/tmp/%s", namespace)
-		if path != fallback {
-			logger.Infof("Trying fallback umount for %s", fallback)
-			cmd = exec.CommandContext(ctx, "umount", fallback)
-			if fallbackOut, fallbackErr := cmd.CombinedOutput(); fallbackErr == nil {
-				_ = os.Remove(fallback)
-				return nil
-			} else {
-				logger.WithError(fallbackErr).Warnf("fallback umount failed for %s: %s", fallback, fallbackOut)
-			}
-		}
-		return fmt.Errorf("umount failed: %w", err)
+		logger.WithError(err).Warnf("umount command failed for %s: %s", safeLocalPath, out)
+		return fmt.Errorf("umount failed for %s: %w", safeLocalPath, err)
 	}
 
 	// clean up empty directory
-	_ = os.Remove(path)
+	_ = os.Remove(safeLocalPath)
 
 	return nil
 }
