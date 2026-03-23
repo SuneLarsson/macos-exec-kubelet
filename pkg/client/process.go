@@ -236,9 +236,12 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 			return fmt.Errorf("failed to mount nfs volume: %w", err)
 		}
 
-		// Setup unmount
+		// Setup unmount — use a fresh context since the CreatePod request
+		// context will be cancelled long before DeletePod is called.
 		cleanupNFS = func() {
-			if err := nfsmount.Unmount(ctx, c.k8sClient, pod.Namespace, nfsNetpol, nfsMountPath); err != nil {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cleanupCancel()
+			if err := nfsmount.Unmount(cleanupCtx, c.k8sClient, pod.Namespace, nfsNetpol, nfsMountPath); err != nil {
 				logger.WithError(err).Warn("Failed to unmount NFS volume")
 			}
 		}
