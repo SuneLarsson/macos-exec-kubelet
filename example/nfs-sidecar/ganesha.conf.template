@@ -15,7 +15,7 @@ NFS_CORE_PARAM
 NFSv4
 {
     # Bypass state/recovery issues in stateless containers
-    Graceless = true; 
+    Graceless = true;
     Allow_Numeric_Owners = true;
     Only_Numeric_Owners = true;
 }
@@ -24,11 +24,11 @@ EXPORT
 {
     Export_Id = 1;
 
-    # Directory to export 
+    # Directory to export (the PVC mount point inside the container)
     Path = "${SHARED_DIRECTORY}";
-    
-    # Mandatory for NFSv4 to mount correctly
-    Pseudo = "${SHARED_DIRECTORY}"; 
+
+    # Mount the export at the NFSv4 pseudo-root so clients can write directly
+    Pseudo = "/";
 
     # Only NFSv4
     Protocols = 4;
@@ -37,12 +37,19 @@ EXPORT
 
     # Map all traffic to your unprivileged container UID/GID
     Squash = All_Squash;
-    Anonymous_Uid = 0;
-    Anonymous_Gid = 0;
+    Anonymous_Uid = ${CURRENT_UID};
+    Anonymous_Gid = ${CURRENT_GID};
 
     Access_Type = RW;
 
+    # MUST be at EXPORT level (not inside FSAL) for Ganesha 4.x
+    Disable_ACL = true;
+
+    # Prevent setgroups() calls which require CAP_SETGID (rootless container has no caps)
+    Manage_Gids = false;
+
     FSAL {
+        # VFS = serve the real filesystem (CephFS PVC mounted into the container)
         Name = VFS;
     }
 }

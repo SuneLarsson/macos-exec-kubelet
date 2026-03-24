@@ -1,13 +1,20 @@
 #!/bin/bash
 
-# The directory to export (can be overridden via ENV)
+# The directory to export (should match the PVC mountPath)
 SHARED_DIRECTORY=${SHARED_DIRECTORY:-/nfsshare}
 
-echo "Starting user-space NFS server (Ganesha) in containerization environment..."
-echo "Exporting ${SHARED_DIRECTORY}"
+echo "Starting user-space NFS server (Ganesha) with VFS backend..."
+echo "Exporting ${SHARED_DIRECTORY} (CephFS PVC mount)"
 
 # Ensure the shared directory exists
 mkdir -p "${SHARED_DIRECTORY}" || true
+
+# Log diagnostic info
+echo "=== DIAGNOSTICS ==="
+echo "UID=$(id -u) GID=$(id -g)"
+echo "FSAL=VFS (serving CephFS PVC mounted at ${SHARED_DIRECTORY})"
+ls -la "${SHARED_DIRECTORY}" 2>/dev/null || echo "WARNING: Cannot list ${SHARED_DIRECTORY}"
+echo "=== END DIAGNOSTICS ==="
 
 export CURRENT_UID=$(id -u)
 export CURRENT_GID=$(id -g)
@@ -20,7 +27,7 @@ export NSS_WRAPPER_PASSWD=/tmp/passwd
 export NSS_WRAPPER_GROUP=/etc/group
 export LD_PRELOAD=libnss_wrapper.so
 
-# Generate the config file from template using your sed logic
+# Generate the config file from template
 cat /etc/ganesha/ganesha.conf.template | sed \
   -e "s|\${SHARED_DIRECTORY}|${SHARED_DIRECTORY}|g" \
   -e "s|\${CURRENT_UID}|${CURRENT_UID}|g" \
