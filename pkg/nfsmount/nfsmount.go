@@ -78,7 +78,7 @@ func Mount(ctx context.Context, k8sClient kubernetes.Interface, namespace, servi
 
 	// Mount using the physical Node IP and the dynamic NodePort
 	logger.Infof("Executing NodePort mount: targetIP=%s, nodePort=%d", targetIP, nodePort)
-	cmdStr := fmt.Sprintf("vers=4,port=%d,noresvport,noowners,rw", nodePort)
+	cmdStr := fmt.Sprintf("vers=3,port=%d,mountport=%d,noresvport,noowners,rw,tcp", nodePort, nodePort)
 	targetStr := fmt.Sprintf("%s:%s", targetIP, remotePath)
 
 	cmd := exec.CommandContext(ctx, "mount", "-t", "nfs", "-o", cmdStr, targetStr, safeLocalPath)
