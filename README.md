@@ -139,28 +139,51 @@ spec:
         kubernetes.io/os: "darwin"
 ```
 
-## Mounting Persistent Volumes (NFS Sidecar)
+## Mounting Persistent Volumes (NFS)
 
-Because macOS cannot natively mount Kubernetes PersistentVolumeClaims (PVCs) like Ceph or Longhorn directly, this provider supports mounting volumes over the network via an NFS sidecar. 
+macOS cannot natively mount Kubernetes PersistentVolumeClaims (PVCs) like CephFS or Longhorn. This provider works around that by mounting volumes over the network using NFS v3.
 
-1. **Deploy an NFS Server Pod** to a standard Linux worker node in your cluster. This pod should mount your PVC (or use an admission controller to mount it, e.g., via labels) and export it via NFS.
-2. **Expose it with a Service** and restrict access with a deny-all **NetworkPolicy**.
-3. **Annotate your macOS Job** to tell the `macos-exec-kubelet` where the NFS service is:
+### How it works
+
+An NFS server pod runs on a standard Linux worker node in your cluster, exports a directory (optionally backed by a PVC), and the kubelet mounts it on the Mac before the job starts.
+
+1. **Deploy an NFS server pod** on a Linux node. It can export either:
+   - A **PVC** (e.g. CephFS, Longhorn) mounted into the container — for persistent, shared storage.
+   - An **emptyDir** or any local path — for ephemeral scratch space.
+2. **Expose the pod with a NodePort Service** so the Mac can reach it.
+3. **Annotate your macOS Job** to tell the kubelet where the NFS service is:
 
 ```yaml
   annotations:
     macos-exec-kubelet/nfs-service: "macos-nfs-service"
-    macos-exec-kubelet/nfs-netpol: "macos-nfs-netpol"
     macos-exec-kubelet/nfs-mount-path: "/proj/projectname"
 ```
 
-Before the job executes, the kubelet will:
-- Discover the ClusterIP of `macos-nfs-service`.
-- Dynamically patch the `macos-nfs-netpol` NetworkPolicy to allow ingress from the Mac's IP.
-- Execute the macOS native `mount -t nfs` command, mounting the share to `/proj/projectname`.
-- Automatically `umount` and revert the NetworkPolicy once the job completes.
+Before the job process starts, the kubelet will:
+- Wait for the NFS service endpoints to become ready.
+- Look up the Node's InternalIP and the Service's NodePort.
+- Execute the macOS native `mount -t nfs` command with NFS v3 options, mounting the share to a local path under `/private/tmp/<namespace>`.
+- Automatically `umount` once the job completes or is deleted.
 
-*For a complete, deployable example including the Linux sidecar and NetworkPolicy, see `example/job.yaml`.*
+The mount options used by the kubelet are defined in [`pkg/nfsmount/nfsmount.go`](pkg/nfsmount/nfsmount.go). Currently they are:
+
+```
+vers=3,port=<nodePort>,mountport=<nodePort>,noresvport,noowners,rw,tcp
+```
+
+If you use a different NFS server that requires different options (e.g. NFS v4, separate mount port), edit `nfsmount.go` to match.
+
+### Included NFS server
+
+The repository includes a lightweight Go-based NFS server in [`example/go-sidecar/`](example/go-sidecar/) built on [github.com/willscott/go-nfs](https://github.com/willscott/go-nfs). It:
+
+- Serves NFS v3 with both NFS and mount protocols on a single port (2049).
+- Runs as non-root (UID 1000).
+- Has been tested with CephFS PVCs for read and write operations.
+
+This NFS server is **not mandatory** — you can swap it for any NFS server (Ganesha, the Linux kernel NFS server, etc.) as long as the mount options in `nfsmount.go` are adjusted to match.
+
+*For a complete deployable example with a CephFS PVC, see [`example/job.yaml`](example/job.yaml).*
 
 ## Flags
 
@@ -178,6 +201,7 @@ cmd/virtual-kubelet/   # main entrypoint and CLI flags
 pkg/
   client/              # ProcessClient — spawns and tracks processes
   provider/            # Virtual Kubelet provider interface implementation
+  nfsmount/            # NFS mount/unmount logic (mount options configured here)
   event/               # Kubernetes event recording
   resource/            # Registry credential helpers (unused in exec mode)
 internal/
@@ -187,7 +211,8 @@ internal/
 scripts/
   create-runner-user.sh  # one-time macOS user setup
 example/
-  job.yaml             # example Kubernetes Job
+  job.yaml             # example Job with NFS server + macOS workload
+  go-sidecar/          # Go-based NFS v3 server (container image source)
 ```
 
 ## Acknowledgements
