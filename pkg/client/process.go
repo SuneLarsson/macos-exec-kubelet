@@ -216,6 +216,13 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 
 	var cleanupNFS func()
 
+	success := false
+	defer func() {
+		if !success && cleanupNFS != nil {
+			cleanupNFS()
+		}
+	}()
+
 	// Mount any NFS volumes based on annotations
 	nfsService := pod.Annotations["macos-exec-kubelet/nfs-service"]
 	nfsNetpol := pod.Annotations["macos-exec-kubelet/nfs-netpol"]
@@ -353,6 +360,7 @@ func (c *ProcessClient) CreatePod(ctx context.Context, pod *corev1.Pod, serviceA
 
 	state.podProcess = podProcess
 	c.processes.Store(key, state)
+	success = true
 	return nil
 }
 
@@ -371,6 +379,12 @@ func (c *ProcessClient) DeletePod(ctx context.Context, namespace, name string, g
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 	val, ok := c.processes.Load(key)
 	if !ok {
+		// Attempt a best-effort unmount in case the pod was orphaned,
+		// or CreatePod crashed before adding to the processes map.
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		_ = nfsmount.Unmount(cleanupCtx, c.k8sClient, namespace, "", "")
+
 		return errdefs.NotFound("pod process not found in memory")
 	}
 	state := val.(*processState)

@@ -103,11 +103,17 @@ func Unmount(ctx context.Context, k8sClient kubernetes.Interface, namespace, net
 	cmd := exec.CommandContext(ctx, "umount", safeLocalPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		logger.WithError(err).Warnf("umount command failed for %s: %s", safeLocalPath, out)
-		return fmt.Errorf("umount failed for %s: %w", safeLocalPath, err)
+		// We log the warning but still proceed to attempt directory removal.
+		// If it's truly still mounted (e.g., busy), os.Remove will fail too.
 	}
 
 	// clean up empty directory
-	_ = os.Remove(safeLocalPath)
+	if err := os.Remove(safeLocalPath); err != nil {
+		if !os.IsNotExist(err) {
+			logger.WithError(err).Warnf("failed to remove directory %s", safeLocalPath)
+			return fmt.Errorf("failed to complete unmount/cleanup for %s: %w", safeLocalPath, err)
+		}
+	}
 
 	return nil
 }
