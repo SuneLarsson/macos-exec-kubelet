@@ -9,7 +9,8 @@ When a Kubernetes Job or Pod is scheduled to this node, the kubelet:
 1. Takes the `command` + `args` from the pod spec
 2. Spawns them as a direct macOS process using `os/exec`
 3. Reports process status (Running / Succeeded / Failed) back to Kubernetes
-4. Streams stdout/stderr to log files accessible via `kubectl logs`
+4. Streams stdout/stderr to log files accessible via `kubectl logs` (with automatic log rotation)
+5. Automatically cleans up orphan processes from previous runs on startup
 
 This gives you full access to host hardware — including the **Apple Neural Engine (ANE)**, Metal GPU, and any other Apple Silicon accelerators — from a standard Kubernetes workload, since the process runs natively on the host.
 
@@ -73,41 +74,6 @@ nohup ./virtual-kubelet \
   >> /var/log/virtual-kubelet.log 2>&1 &
 ```
 
-### launchd (persistent daemon)
-
-Drop a plist into `/Library/LaunchDaemons/com.thesis.virtual-kubelet.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>          <string>com.thesis.virtual-kubelet</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/local/bin/virtual-kubelet</string>
-    <string>--nodename</string>   <string>mac-mini</string>
-    <string>--log-level</string>  <string>info</string>
-    <string>--runner-user</string><string>vk-runner</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>KUBECONFIG</key>               <string>/var/root/.kube/config</string>
-    <key>APISERVER_CERT_LOCATION</key>  <string>/etc/vk/kubelet.crt</string>
-    <key>APISERVER_KEY_LOCATION</key>   <string>/etc/vk/kubelet.key</string>
-    <key>APISERVER_CA_CERT_LOCATION</key><string>/etc/vk/ca.crt</string>
-  </dict>
-  <key>StandardOutPath</key>  <string>/var/log/virtual-kubelet.log</string>
-  <key>StandardErrorPath</key><string>/var/log/virtual-kubelet.log</string>
-  <key>RunAtLoad</key>  <true/>
-  <key>KeepAlive</key>  <true/>
-</dict>
-</plist>
-```
-
-```bash
-sudo launchctl load /Library/LaunchDaemons/com.thesis.virtual-kubelet.plist
-```
 
 ## Writing a Job
 
@@ -183,7 +149,14 @@ The repository includes a lightweight Go-based NFS server in [`example/go-sideca
 
 This NFS server is **not mandatory** — you can swap it for any NFS server (Ganesha, the Linux kernel NFS server, etc.) as long as the mount options in `nfsmount.go` are adjusted to match.
 
-*For a complete deployable example with a CephFS PVC, see [`example/job.yaml`](example/job.yaml).*
+### Example Workloads
+
+The `example/` directory contains several deployable manifests demonstrating how to use the provider:
+
+- **`exampleWithoutNFS.yaml`**: A simple "Hello world" job running directly on macOS without persistent storage.
+- **`benchmarkExec.yaml`**: An AI benchmarking suite running on macOS, with data loaded over NFS.
+- **`fioStorageTesting.yaml`**: A macOS storage benchmark running FIO over the NFS mount.
+- **`fioLinuxTesting.yaml`**: A native Linux storage benchmark (for comparing native CephFS performance vs macOS NFS).
 
 ## Flags
 
@@ -193,6 +166,12 @@ This NFS server is **not mandatory** — you can swap it for any NFS server (Gan
 | `--runner-user` | _(current user)_ | macOS user to run job processes as |
 | `--log-level` | `info` | Log verbosity (`debug`, `info`, `warn`, `error`) |
 | `--authentication-token-webhook` | `false` | Use Kubernetes TokenReview API to authenticate log/exec requests |
+| `--authentication-token-webhook-cache-ttl` | | The duration to cache responses from the webhook token authenticator |
+| `--authorization-webhook-cache-authorized-ttl` | | The duration to cache 'authorized' responses from the webhook authorizer |
+| `--authorization-webhook-cache-unauthorized-ttl` | | The duration to cache 'unauthorized' responses from the webhook authorizer |
+| `--client-verify-ca` | | CA cert to use to verify client requests |
+| `--no-verify-clients` | `false` | Do not require client certificate validation |
+| `--trace-sample-rate` | | Set probability of tracing samples |
 
 ## Project structure
 
@@ -211,8 +190,11 @@ internal/
 scripts/
   create-runner-user.sh  # one-time macOS user setup
 example/
-  job.yaml             # example Job with NFS server + macOS workload
-  go-sidecar/          # Go-based NFS v3 server (container image source)
+  exampleWithoutNFS.yaml # Simple macOS job without NFS
+  benchmarkExec.yaml     # macOS AI benchmark job with NFS server
+  fioStorageTesting.yaml # macOS FIO benchmark job with NFS server
+  fioLinuxTesting.yaml   # Linux native FIO benchmark job
+  go-sidecar/            # Go-based NFS v3 server (container image source)
 ```
 
 ## Acknowledgements

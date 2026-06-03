@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: macos-exec-no-nfs
+  namespace: example-namespace
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: macos-exec-no-nfs
+        image: placeholder
+        command:
+          - "/bin/zsh"
+          - "-c"
+          - |
+            echo "Hello world this pod is not using nfs"
+      tolerations:
+      - key: "virtual-kubelet.io/provider"
+        operator: "Exists"
+        effect: "NoSchedule"
+      nodeSelector:
+        kubernetes.io/os: "darwin"
